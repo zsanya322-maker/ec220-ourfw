@@ -1,0 +1,17 @@
+# Standard WireGuard profile. Copy to vpn.conf and fill values.
+# For AmneziaWG, keep the same structure and add Jc/Jmin/Jmax/S1/S2/H1..H4 and optional I1
+# under [Interface]. OURFW deliberately does not use PostUp/PreDown commands.
+[Interface]
+PrivateKey = <private-key>
+Address = 10.0.0.2/32
+DNS = 1.1.1.1
+MTU = 1420
+
+[Peer]
+PublicKey = <server-public-key>
+PresharedKey =
+Endpoint = vpn.example.net:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+
+# I1 = <b 0x01 0x02>   # optional on the pinned AWG-capable Padavan commit

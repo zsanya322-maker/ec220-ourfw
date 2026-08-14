@@ -1,0 +1,2 @@
+# Safe starter profile: HTTPS TCP only. Tune after real ISP tests.
+--filter-tcp=443 --dpi-desync=fake,split2 --dpi-desync-split-pos=1 --dpi-desync-fooling=md5sig,badseq <HOSTLIST>

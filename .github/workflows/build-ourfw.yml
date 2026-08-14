@@ -1,0 +1,93 @@
+name: Build EC220 OURFW
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'ourfw-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: registry.gitlab.com/hadzhioglu/padavan-ng
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Static checks
+        run: |
+          if ! command -v python3 >/dev/null 2>&1; then apt-get update && apt-get install -y python3; fi
+          chmod +x tests/static-check.sh build/*.sh tools/*.py ci/*.sh
+          ./tests/static-check.sh
+
+      - name: Load pinned variables
+        run: |
+          sed -i 's/\r$//' variables build.config
+          . ./variables
+          echo "PADAVAN_REPO=$PADAVAN_REPO" >> "$GITHUB_ENV"
+          echo "PADAVAN_BRANCH=$PADAVAN_BRANCH" >> "$GITHUB_ENV"
+          echo "PADAVAN_COMMIT=$PADAVAN_COMMIT" >> "$GITHUB_ENV"
+          echo "PADAVAN_TOOLCHAIN_URL=$PADAVAN_TOOLCHAIN_URL" >> "$GITHUB_ENV"
+
+      - name: Checkout exact Padavan source
+        run: |
+          git config --global --add safe.directory '*'
+          git clone --filter=blob:none --no-checkout "$PADAVAN_REPO" padavan-ng
+          git -C padavan-ng fetch --depth=1 origin "$PADAVAN_COMMIT"
+          git -C padavan-ng checkout --detach FETCH_HEAD
+          test "$(git -C padavan-ng rev-parse HEAD)" = "$PADAVAN_COMMIT"
+          git -C padavan-ng rev-parse HEAD | tee PADAVAN_COMMIT_USED.txt
+
+      - name: Download Padavan toolchain
+        run: |
+          wget -qO toolchain.tzst "$PADAVAN_TOOLCHAIN_URL"
+          sha256sum toolchain.tzst | tee TOOLCHAIN.sha256
+          tar -C padavan-ng --zstd -xf toolchain.tzst
+
+      - name: Integrate OURFW
+        run: |
+          cp build.config padavan-ng/trunk/.config
+          python3 tools/apply-to-padavan.py padavan-ng
+          python3 tools/verify-padavan-tree.py padavan-ng
+
+      - name: Build firmware
+        run: |
+          pushd padavan-ng/trunk
+          ./clear_tree.sh
+          ./build_firmware.sh 2>&1 | tee ../../build.log
+          popd
+
+      - name: Validate and prepare artifacts
+        run: |
+          ./ci/prepare-artifacts.sh padavan-ng dist
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: EC220-G5-v2-OURFW-v0.3
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            dist/*
+            PADAVAN_COMMIT_USED.txt
+            TOOLCHAIN.sha256
+            build.log
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: EC220-OURFW-build-failure
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            build.log
+            PADAVAN_COMMIT_USED.txt
+            TOOLCHAIN.sha256
+            padavan-ng/trunk/.config
