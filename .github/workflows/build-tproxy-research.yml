@@ -1,0 +1,109 @@
+name: Build EC220 TPROXY Research
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v0.7-tproxy-kernel
+    paths:
+      - 'tools/enable-tproxy.py'
+      - 'ci/verify-tproxy-romfs.sh'
+      - '.github/workflows/build-tproxy-research.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: registry.gitlab.com/hadzhioglu/padavan-ng
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Static checks
+        run: |
+          if ! command -v python3 >/dev/null 2>&1; then apt-get update && apt-get install -y python3; fi
+          chmod +x tests/*.sh build/*.sh tools/*.sh tools/*.py ci/*.sh ci/*.py
+          sh ./tests/static-check.sh
+          sh ./tests/v064-hardware-regressions.sh
+          sh ./tests/v070-subscription-manager.sh
+          python3 -m py_compile tools/enable-tproxy.py
+
+      - name: Load pinned variables
+        run: |
+          sed -i 's/\r$//' variables build.config
+          . ./variables
+          echo "PADAVAN_REPO=$PADAVAN_REPO" >> "$GITHUB_ENV"
+          echo "PADAVAN_COMMIT=$PADAVAN_COMMIT" >> "$GITHUB_ENV"
+          echo "PADAVAN_TOOLCHAIN_URL=$PADAVAN_TOOLCHAIN_URL" >> "$GITHUB_ENV"
+          echo "PADAVAN_TOOLCHAIN_SHA256=$PADAVAN_TOOLCHAIN_SHA256" >> "$GITHUB_ENV"
+          echo "PADAVAN_TOOLCHAIN_SIZE=$PADAVAN_TOOLCHAIN_SIZE" >> "$GITHUB_ENV"
+          echo "OURFW_VERSION=$(cat ourfw/VERSION)" >> "$GITHUB_ENV"
+
+      - name: Checkout exact Padavan source
+        run: |
+          git config --global --add safe.directory '*'
+          git clone --filter=blob:none --no-checkout "$PADAVAN_REPO" padavan-ng
+          git -C padavan-ng fetch --depth=1 origin "$PADAVAN_COMMIT"
+          git -C padavan-ng checkout --detach FETCH_HEAD
+          test "$(git -C padavan-ng rev-parse HEAD)" = "$PADAVAN_COMMIT"
+
+      - name: Download Padavan toolchain
+        run: |
+          wget -qO toolchain.tzst "$PADAVAN_TOOLCHAIN_URL"
+          test "$(stat -c %s toolchain.tzst)" = "$PADAVAN_TOOLCHAIN_SIZE"
+          printf '%s  %s\n' "$PADAVAN_TOOLCHAIN_SHA256" toolchain.tzst | sha256sum -c -
+          tar -C padavan-ng --zstd -xf toolchain.tzst
+
+      - name: Integrate OURFW plus TPROXY research config
+        run: |
+          cp build.config padavan-ng/trunk/.config
+          python3 tools/apply-to-padavan.py padavan-ng
+          python3 tools/enable-tproxy.py padavan-ng/trunk
+          python3 tools/harden-https-defaults.py padavan-ng
+          python3 tools/verify-padavan-tree.py padavan-ng
+          cfg=padavan-ng/trunk/configs/boards/TPLINK/TL_EC220_G5-V2/kernel-3.4.x.config
+          grep -qx 'CONFIG_NETFILTER_XT_TARGET_TPROXY=m' "$cfg"
+          grep -qx 'CONFIG_NETFILTER_XT_MATCH_SOCKET=m' "$cfg"
+
+      - name: Build firmware
+        run: |
+          pushd padavan-ng/trunk
+          ./clear_tree.sh
+          ./build_firmware.sh 2>&1 | tee ../../build.log
+          popd
+
+      - name: Verify ordinary OURFW ROMFS
+        run: ./ci/verify-built-romfs.sh padavan-ng build.log ROMFS-VERIFY.txt
+
+      - name: Verify TPROXY ROMFS
+        run: ./ci/verify-tproxy-romfs.sh padavan-ng TPROXY-ROMFS-VERIFY.txt
+
+      - name: Validate firmware image
+        run: |
+          ./ci/prepare-artifacts.sh padavan-ng dist
+          fw=$(find dist -maxdepth 1 -type f -name "TL_EC220_G5-V2_OURFW-${OURFW_VERSION}-*.bin" -print -quit)
+          test -n "$fw"
+          python3 ./ci/verify-built-image.py "$fw" IMAGE-VERIFY.txt
+          python3 ./ci/verify-ourfw-payload.py "$fw" PAYLOAD-VERIFY.txt
+          sha256sum "$fw" | tee FIRMWARE.sha256
+          stat -c 'FIRMWARE_BYTES=%s' "$fw" | tee FIRMWARE-SIZE.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EC220-v0.7.0-TPROXY-RESEARCH
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            dist/*
+            build.log
+            ROMFS-VERIFY.txt
+            TPROXY-ROMFS-VERIFY.txt
+            IMAGE-VERIFY.txt
+            PAYLOAD-VERIFY.txt
+            FIRMWARE.sha256
+            FIRMWARE-SIZE.txt
