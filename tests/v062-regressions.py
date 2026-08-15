@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import sys
+import re, sys
 R=Path(__file__).resolve().parents[1]
 errs=[]
 def t(p): return (R/p).read_text(errors='replace')
 def need(c,m):
     if not c: errs.append(m)
+
+def version_at_least(v, minimum=(0,6,2)):
+    m=re.fullmatch(r'v(\d+)\.(\d+)\.(\d+)',v)
+    return bool(m and tuple(map(int,m.groups())) >= minimum)
 
 ver=t('ourfw/VERSION').strip()
 smart=t('ourfw/modules/smart-routing/apply.sh')
@@ -18,7 +22,7 @@ budget=t('tools/storage-budget.sh')
 static=t('tests/static-check.sh') if (R/'tests/static-check.sh').exists() else ''
 payload=t('ci/verify-ourfw-payload.py')
 
-need(ver=='v0.6.2',f'expected v0.6.2, got {ver!r}')
+need(version_at_least(ver),f'expected OURFW >= v0.6.2, got {ver!r}')
 need('route_fail()' in smart and 'routing: critical rule failed:' in smart,'critical routing failure helper missing')
 for token in ['IPv4 kill-switch reject','IPv6 output reject','policy ip rule','mangle PREROUTING jump','VPN policy default route']:
     need(token in smart,f'critical routing gate missing: {token}')
@@ -42,7 +46,7 @@ need('Reserved for Padavan/user storage' in budget,'Storage reserve is not repor
 for f in ['v062-network-faults.sh','v062-watchdog-mock.sh','v062-loader-failure-mock.sh','v062-dns-failclosed.sh','v062-rollback-reapply-mock.sh','v062-update-specialfiles.sh']:
     need(f in static,f'{f} is not wired into static checks')
 need('v062-regressions.py' in static,'v0.6.2 static regression is not wired')
-need("version=='v0.6.2'" in payload and "b'routing: critical rule failed:'" in payload and "b'OURFW_WATCHDOG_ONESHOT'" in payload and "b'no-resolv'" in payload and "b'pending retained for retry'" in payload and "b'special archive members are not allowed'" in payload,'final payload verifier does not enforce v0.6.2 fixes')
+need("expected_version=(ROOT/'ourfw/VERSION').read_text().strip()" in payload and 'version==expected_version' in payload and "b'routing: critical rule failed:'" in payload and "b'OURFW_WATCHDOG_ONESHOT'" in payload and "b'no-resolv'" in payload and "b'pending retained for retry'" in payload and "b'special archive members are not allowed'" in payload,'final payload verifier does not enforce v0.6.2+ fixes/dynamic VERSION')
 
 if errs:
     for e in errs: print('ERROR:',e,file=sys.stderr)

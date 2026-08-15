@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Independent final-image check for OURFW v0.6.2 mutable payload/safety fixes."""
+"""Independent final-image check for the current OURFW mutable payload/safety fixes."""
 from __future__ import annotations
 import argparse, importlib.util, io, tarfile
 from pathlib import Path
 
 HERE=Path(__file__).resolve().parent
+ROOT=HERE.parent
+expected_version=(ROOT/'ourfw/VERSION').read_text().strip()
 spec=importlib.util.spec_from_file_location('ourfw_image_verify', HERE/'verify-built-image.py')
 mod=importlib.util.module_from_spec(spec); assert spec and spec.loader; spec.loader.exec_module(mod)
 
@@ -35,7 +37,7 @@ if '/usr/share/ourfw/defaults.tar.bz2' in sq.paths:
             dns=read('./modules/dns/apply.sh') if './modules/dns/apply.sh' in names else b''
             rollback=read('./runtime/ourfw-rollback.sh') if './runtime/ourfw-rollback.sh' in names else b''
             updater=read('./runtime/ourfw-update.sh') if './runtime/ourfw-update.sh' in names else b''
-        need(version=='v0.6.2',f'defaults VERSION is {version!r}, expected v0.6.2')
+        need(version==expected_version,f'defaults VERSION is {version!r}, expected {expected_version!r}')
         for n in ['./modules/vpn/module-handoff.sh','./modules/vpn/apply.sh','./modules/vpn/failover.sh','./modules/smart-routing/apply.sh','./modules/watchdog/watchdog.sh','./modules/dns/apply.sh','./runtime/ourfw-rollback.sh','./runtime/ourfw-update.sh']:
             need(n in names,f'defaults missing {n}')
         for token in [b'routing: critical rule failed:',b'IPv4 kill-switch reject',b'IPv6 output reject',b'policy ip rule']:
@@ -49,7 +51,7 @@ if '/usr/share/ourfw/defaults.tar.bz2' in sq.paths:
         need(b'special archive members are not allowed' in updater,'updater payload lacks special-file archive guard')
     except Exception as e:
         errs.append(f'defaults archive unreadable: {e}')
-lines=['PAYLOAD_VERIFY='+('FAILED' if errs else 'OK')]
+lines=['PAYLOAD_VERIFY='+('FAILED' if errs else 'OK'),f'EXPECTED_VERSION={expected_version}']
 lines += ['ERROR='+e for e in errs]
 Path(a.report).write_text('\n'.join(lines)+'\n')
 print(Path(a.report).read_text(),end='')
