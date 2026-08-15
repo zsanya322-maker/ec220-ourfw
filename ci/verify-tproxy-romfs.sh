@@ -17,14 +17,23 @@ snapshot() {
   fi
 
   log 'BUILD_TREE_MATCHES:'
-  find "$TREE/trunk" -type f \( -name 'xt_TPROXY.ko' -o -name 'xt_socket.ko' -o -name 'libxt_TPROXY.so' -o -name 'libxt_socket.so' \) \
+  find "$TREE/trunk" -type f \( -name 'nf_tproxy_core.ko' -o -name 'xt_TPROXY.ko' -o -name 'xt_socket.ko' -o -name 'libxt_TPROXY.so' -o -name 'libxt_socket.so' \) \
     -printf '%P %s\n' 2>/dev/null | sort | head -100 | tee -a "$REPORT" || true
 
-  cfg="$TREE/trunk/configs/boards/TPLINK/TL_EC220_G5-V2/kernel-3.4.x.config"
-  if [[ -f "$cfg" ]]; then
-    log 'KCONFIG_TPROXY:'
-    grep -E 'CONFIG_(NETFILTER_TPROXY|NETFILTER_XT_TARGET_TPROXY|NETFILTER_XT_MATCH_SOCKET|IP_MULTIPLE_TABLES)=' "$cfg" \
+  board_cfg="$TREE/trunk/configs/boards/TPLINK/TL_EC220_G5-V2/kernel-3.4.x.config"
+  if [[ -f "$board_cfg" ]]; then
+    log 'BOARD_KCONFIG_TPROXY:'
+    grep -E 'CONFIG_(EXPERIMENTAL|NETFILTER_ADVANCED|NETFILTER_TPROXY|NETFILTER_XT_TARGET_TPROXY|NETFILTER_XT_MATCH_SOCKET|IP_NF_MANGLE|IP_MULTIPLE_TABLES)=' "$board_cfg" \
       | tee -a "$REPORT" || true
+  fi
+
+  effective_cfg="$TREE/trunk/linux-3.4.x/.config"
+  if [[ -f "$effective_cfg" ]]; then
+    log 'EFFECTIVE_KCONFIG_TPROXY:'
+    grep -E 'CONFIG_(EXPERIMENTAL|NETFILTER_ADVANCED|NETFILTER_TPROXY|NETFILTER_XT_TARGET_TPROXY|NETFILTER_XT_MATCH_SOCKET|IP_NF_MANGLE|IP_MULTIPLE_TABLES)=' "$effective_cfg" \
+      | tee -a "$REPORT" || true
+  else
+    log 'EFFECTIVE_KCONFIG_MISSING=1'
   fi
   log '--- TPROXY_DIAGNOSTICS_END ---'
 }
@@ -38,8 +47,10 @@ fail() {
 
 [[ -d "$ROMFS/lib/modules" ]] || fail 'missing lib/modules'
 
+core_mod=$(find "$ROMFS/lib/modules" -type f -name 'nf_tproxy_core.ko' -print -quit)
 tproxy_mod=$(find "$ROMFS/lib/modules" -type f -name 'xt_TPROXY.ko' -print -quit)
 socket_mod=$(find "$ROMFS/lib/modules" -type f -name 'xt_socket.ko' -print -quit)
+[[ -n "$core_mod" && -s "$core_mod" ]] || fail 'nf_tproxy_core.ko was not built/packed'
 [[ -n "$tproxy_mod" && -s "$tproxy_mod" ]] || fail 'xt_TPROXY.ko was not built/packed'
 [[ -n "$socket_mod" && -s "$socket_mod" ]] || fail 'xt_socket.ko was not built/packed'
 
@@ -57,9 +68,11 @@ fi
 [[ "$userspace" != NO ]] || fail 'iptables userspace lacks TPROXY/socket extensions'
 
 log 'TPROXY_ROMFS_VERIFY=OK'
+log "NF_TPROXY_CORE_BYTES=$(stat -c %s "$core_mod")"
 log "XT_TPROXY_BYTES=$(stat -c %s "$tproxy_mod")"
 log "XT_SOCKET_BYTES=$(stat -c %s "$socket_mod")"
 log "IPTABLES_TPROXY_MODE=$userspace"
+log "NF_TPROXY_CORE_PATH=${core_mod#$ROMFS/}"
 log "XT_TPROXY_PATH=${tproxy_mod#$ROMFS/}"
 log "XT_SOCKET_PATH=${socket_mod#$ROMFS/}"
 [[ -n "$multi" ]] && log "XTABLES_MULTI_PATH=${multi#$ROMFS/}"

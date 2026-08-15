@@ -37,18 +37,24 @@ def main() -> int:
         print(f"missing EC220 kernel config: {cfg}", file=sys.stderr)
         return 3
 
-    # Both xt_TPROXY and xt_socket are hidden behind NETFILTER_ADVANCED in the
-    # pinned Linux 3.4 Kconfig.  EC220's stock config keeps that menu disabled,
-    # so merely appending the two module symbols is silently discarded by
-    # olddefconfig.  Enable the shared prerequisite explicitly, then only the
-    # two modules needed by the transparent Hysteria2 path.
+    # Linux 3.4 has a separate NETFILTER_TPROXY core.  Both xt_TPROXY and
+    # xt_socket depend on it, and the core itself depends on EXPERIMENTAL,
+    # IP_NF_MANGLE and NETFILTER_ADVANCED.  Merely writing the two xt symbols
+    # leaves them visible in the board config but olddefconfig drops them from
+    # the effective kernel configuration, so no .ko files are ever built.
+    set_kconfig(cfg, "CONFIG_EXPERIMENTAL", "y")
     set_kconfig(cfg, "CONFIG_NETFILTER_ADVANCED", "y")
+    set_kconfig(cfg, "CONFIG_IP_NF_MANGLE", "m")
+    set_kconfig(cfg, "CONFIG_NETFILTER_TPROXY", "m")
     set_kconfig(cfg, "CONFIG_NETFILTER_XT_TARGET_TPROXY", "m")
     set_kconfig(cfg, "CONFIG_NETFILTER_XT_MATCH_SOCKET", "m")
 
     final = cfg.read_text(errors="replace")
     for expected in (
+        "CONFIG_EXPERIMENTAL=y",
         "CONFIG_NETFILTER_ADVANCED=y",
+        "CONFIG_IP_NF_MANGLE=m",
+        "CONFIG_NETFILTER_TPROXY=m",
         "CONFIG_NETFILTER_XT_TARGET_TPROXY=m",
         "CONFIG_NETFILTER_XT_MATCH_SOCKET=m",
         "CONFIG_IP_MULTIPLE_TABLES=y",
@@ -57,7 +63,11 @@ def main() -> int:
             print(f"TPROXY prerequisite/config missing after edit: {expected}", file=sys.stderr)
             return 4
 
-    print("EC220 TPROXY research config enabled: NETFILTER_ADVANCED=y, xt_TPROXY=m, xt_socket=m")
+    print(
+        "EC220 TPROXY research config enabled: EXPERIMENTAL=y, "
+        "NETFILTER_ADVANCED=y, IP_NF_MANGLE=m, NETFILTER_TPROXY=m, "
+        "xt_TPROXY=m, xt_socket=m"
+    )
     return 0
 
 
