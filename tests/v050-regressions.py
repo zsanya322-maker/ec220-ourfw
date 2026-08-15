@@ -23,7 +23,7 @@ need('Verify final firmware image' in wf and 'verify-built-image.py' in wf, 'wor
 need('IMAGE-VERIFY.txt' in wf, 'final image report is not uploaded')
 need("romfs_exists" in rom and 'readlink' in rom, 'ROMFS symlink resolver missing')
 need("'./runtime/ourfw-ui.sh'" in rom, 'ROMFS verifier does not require mutable UI helper')
-need('/usr/bin/base64' in img and 'ourfw_api.cgi' in img, 'final image verifier misses v0.5 immutable requirements')
+need('/bin/base64' in img and 'ourfw_api.cgi' in img, 'final image verifier misses v0.5 immutable requirements')
 need('ourfw-transfer.sh' in img and 'ourfw-backup.sh' in img and 'ourfw-ui.sh' in img, 'final image verifier misses mutable v0.5 runtime')
 need('ourfw_api_blob_ok' in app and re.search(r'n > 1024',app), 'C bridge does not bound chunk size')
 need('file-chunk' in app and 'ourfw_api_blob_ok(p2)' in app, 'file chunks are not routed through blob validator')

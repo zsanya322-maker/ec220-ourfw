@@ -153,7 +153,7 @@ def main():
     errs=[]
     def need(cond,msg):
         if not cond: errs.append(msg)
-    required=['/usr/bin/ourfw-loader.sh','/usr/share/ourfw/defaults.tar.bz2','/www/ourfw/index.asp','/www/ourfw/assets/ourfw.js','/www/ourfw/assets/ourfw.css','/usr/sbin/httpd','/usr/sbin/dropbear','/usr/sbin/wg','/usr/sbin/awg','/usr/bin/nfqws','/usr/bin/zapret.sh','/usr/bin/sha256sum','/usr/bin/base64','/usr/bin/autostart.sh']
+    required=['/usr/bin/ourfw-loader.sh','/usr/share/ourfw/defaults.tar.bz2','/www/ourfw/index.asp','/www/ourfw/assets/ourfw.js','/www/ourfw/assets/ourfw.css','/usr/sbin/httpd','/usr/sbin/dropbear','/usr/sbin/wg','/usr/sbin/awg','/usr/bin/nfqws','/usr/bin/zapret.sh','/usr/bin/sha256sum','/bin/base64','/usr/bin/autostart.sh']
     for p in required: need(sq.exists_inside(p),f'missing/broken {p}')
     for mod in ['wireguard.ko','amneziawg.ko','nfnetlink_queue.ko','xt_NFQUEUE.ko','ip6table_mangle.ko']:
         need(any(p.endswith('/'+mod) for p in sq.paths),f'missing kernel module {mod}')

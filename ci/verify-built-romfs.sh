@@ -48,7 +48,7 @@ required=(
   usr/bin/nfqws
   usr/bin/zapret.sh
   usr/bin/sha256sum
-  usr/bin/base64
+  bin/base64
   usr/bin/autostart.sh
 )
 for rel in "${required[@]}"; do
