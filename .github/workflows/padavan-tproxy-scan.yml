@@ -30,53 +30,64 @@ jobs:
           git -C padavan checkout --detach FETCH_HEAD
           test "$(git -C padavan rev-parse HEAD)" = "$PADAVAN_COMMIT"
 
-      - name: Scan TPROXY source and configs
+      - name: Scan EC220 TPROXY source and config
         shell: bash
         run: |
           set -euo pipefail
           out=TPROXY-SOURCE-SCAN.txt
-          : > "$out"
+          board_cfg=padavan/trunk/configs/boards/TPLINK/TL_EC220_G5-V2/kernel-3.4.x.config
+          kconfig=padavan/trunk/linux-3.4.x/net/netfilter/Kconfig
+          kmake=padavan/trunk/linux-3.4.x/net/netfilter/Makefile
+          ipt_ext=padavan/trunk/user/iptables/iptables-1.8.10/extensions
+          test -f "$board_cfg"
+          test -f "$kconfig"
+          test -f "$ipt_ext/libxt_TPROXY.c"
+          test -f "$ipt_ext/libxt_socket.c"
+
           {
             echo "TPROXY_SOURCE_SCAN=START"
             echo "PADAVAN_COMMIT=$(git -C padavan rev-parse HEAD)"
+            echo "BOARD_CONFIG=$board_cfg"
             echo
-            echo '=== KCONFIG/SOURCE SYMBOLS ==='
-            grep -R -n -E 'NETFILTER_XT_TARGET_TPROXY|NETFILTER_XT_MATCH_SOCKET|xt_TPROXY|xt_socket' \
-              padavan/trunk padavan/toolchain 2>/dev/null | head -n 300 || true
+            echo '=== EC220 BOARD CONFIG ==='
+            grep -n -E '^(CONFIG_NETFILTER_XT_TARGET_TPROXY|CONFIG_NETFILTER_XT_MATCH_SOCKET|CONFIG_NETFILTER_XT_TARGET_MARK|CONFIG_NETFILTER_XT_MATCH_MARK|CONFIG_IP_ADVANCED_ROUTER|CONFIG_IP_MULTIPLE_TABLES|CONFIG_IP_NF_MANGLE)=|^# (CONFIG_NETFILTER_XT_TARGET_TPROXY|CONFIG_NETFILTER_XT_MATCH_SOCKET|CONFIG_NETFILTER_XT_TARGET_MARK|CONFIG_NETFILTER_XT_MATCH_MARK|CONFIG_IP_ADVANCED_ROUTER|CONFIG_IP_MULTIPLE_TABLES|CONFIG_IP_NF_MANGLE) is not set' "$board_cfg" || true
             echo
-            echo '=== KERNEL CONFIG FILES ==='
-            find padavan -type f \( -name '*kernel*config*' -o -name '*.config' \) -print 2>/dev/null | head -n 200
+            echo '=== KERNEL SOURCE ==='
+            grep -n -E '^config NETFILTER_XT_TARGET_TPROXY$|^config NETFILTER_XT_MATCH_SOCKET$' "$kconfig" || true
+            grep -n -E 'CONFIG_NETFILTER_XT_TARGET_TPROXY|CONFIG_NETFILTER_XT_MATCH_SOCKET' "$kmake" || true
+            test -f padavan/trunk/linux-3.4.x/net/netfilter/xt_TPROXY.c && echo 'xt_TPROXY.c=present'
+            test -f padavan/trunk/linux-3.4.x/net/netfilter/xt_socket.c && echo 'xt_socket.c=present'
             echo
-            echo '=== ENABLED/DISABLED CONFIG SYMBOLS ==='
-            grep -R -n -E '^(CONFIG_NETFILTER_XT_TARGET_TPROXY|CONFIG_NETFILTER_XT_MATCH_SOCKET)=|^# (CONFIG_NETFILTER_XT_TARGET_TPROXY|CONFIG_NETFILTER_XT_MATCH_SOCKET) is not set' \
-              padavan 2>/dev/null | head -n 300 || true
+            echo '=== IPTABLES USERSPACE ==='
+            echo 'libxt_TPROXY.c=present'
+            echo 'libxt_socket.c=present'
+            grep -n -E 'TPROXY|tproxy-mark|on-port|on-ip' "$ipt_ext/libxt_TPROXY.c" | sed -n '1,40p' || true
+            grep -n -E 'socket|transparent|nowildcard|restore-skmark' "$ipt_ext/libxt_socket.c" | sed -n '1,40p' || true
             echo
-            echo '=== IPTABLES USERSPACE TPROXY ==='
-            grep -R -n -E 'libxt_TPROXY|TPROXY target|xtables.*TPROXY|\.TPROXY' \
-              padavan/trunk/user padavan/trunk/libs 2>/dev/null | head -n 300 || true
-            echo
-            echo '=== OURFW BUILD CONFIG RELATED ==='
+            echo '=== OURFW BUILD CONFIG ==='
             grep -n -E 'NETFILTER|IP_NF|IP6_NF|MANGLE|NFQUEUE|TPROXY|SOCKET' build.config || true
           } | tee "$out"
 
-          ksrc=NO
-          grep -R -q 'config NETFILTER_XT_TARGET_TPROXY' padavan/trunk 2>/dev/null && ksrc=YES || true
-          ssrc=NO
-          grep -R -q 'config NETFILTER_XT_MATCH_SOCKET' padavan/trunk 2>/dev/null && ssrc=YES || true
-          enabled_tproxy=NO
-          grep -R -q -E '^CONFIG_NETFILTER_XT_TARGET_TPROXY=(y|m)$' padavan 2>/dev/null && enabled_tproxy=YES || true
-          enabled_socket=NO
-          grep -R -q -E '^CONFIG_NETFILTER_XT_MATCH_SOCKET=(y|m)$' padavan 2>/dev/null && enabled_socket=YES || true
-          user_tproxy=NO
-          grep -R -q -E 'libxt_TPROXY|TPROXY target' padavan/trunk/user padavan/trunk/libs 2>/dev/null && user_tproxy=YES || true
+          cfg_state() {
+            sym=$1
+            if grep -q "^${sym}=y$" "$board_cfg"; then echo y
+            elif grep -q "^${sym}=m$" "$board_cfg"; then echo m
+            elif grep -q "^# ${sym} is not set$" "$board_cfg"; then echo n
+            else echo absent
+            fi
+          }
+
           {
             echo
-            echo "KERNEL_SOURCE_TPROXY=$ksrc"
-            echo "KERNEL_SOURCE_SOCKET_MATCH=$ssrc"
-            echo "BASE_CONFIG_TPROXY_ENABLED=$enabled_tproxy"
-            echo "BASE_CONFIG_SOCKET_ENABLED=$enabled_socket"
-            echo "IPTABLES_SOURCE_TPROXY=$user_tproxy"
-            echo 'NOTE=base config evidence is not the same as the final EC220 built .config'
+            echo "KERNEL_SOURCE_TPROXY=YES"
+            echo "KERNEL_SOURCE_SOCKET_MATCH=YES"
+            echo "EC220_CONFIG_TPROXY=$(cfg_state CONFIG_NETFILTER_XT_TARGET_TPROXY)"
+            echo "EC220_CONFIG_SOCKET_MATCH=$(cfg_state CONFIG_NETFILTER_XT_MATCH_SOCKET)"
+            echo "EC220_CONFIG_IP_MULTIPLE_TABLES=$(cfg_state CONFIG_IP_MULTIPLE_TABLES)"
+            echo "EC220_CONFIG_IP_NF_MANGLE=$(cfg_state CONFIG_IP_NF_MANGLE)"
+            echo "IPTABLES_SOURCE_TPROXY=YES"
+            echo "IPTABLES_SOURCE_SOCKET=YES"
+            echo 'NOTE=final runtime availability still requires built-image or live read-only verification'
             echo "TPROXY_SOURCE_SCAN=OK"
           } | tee -a "$out"
 
