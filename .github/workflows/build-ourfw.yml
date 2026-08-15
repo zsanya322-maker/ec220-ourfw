@@ -84,6 +84,7 @@ jobs:
       - name: Verify built ROMFS
         run: |
           ./ci/verify-built-romfs.sh padavan-ng build.log ROMFS-VERIFY.txt
+          ./ci/verify-subscription-romfs.sh padavan-ng SUBSCRIPTION-ROMFS-VERIFY.txt
 
       - name: Validate and prepare artifacts
         run: |
@@ -110,6 +111,7 @@ jobs:
             build.log
             MODULE-EXPORTS.txt
             ROMFS-VERIFY.txt
+            SUBSCRIPTION-ROMFS-VERIFY.txt
             IMAGE-VERIFY.txt
             PAYLOAD-VERIFY.txt
             HTTPS-VERIFY.txt
@@ -127,6 +129,7 @@ jobs:
             TOOLCHAIN.sha256
             MODULE-EXPORTS.txt
             ROMFS-VERIFY.txt
+            SUBSCRIPTION-ROMFS-VERIFY.txt
             IMAGE-VERIFY.txt
             PAYLOAD-VERIFY.txt
             HTTPS-VERIFY.txt
