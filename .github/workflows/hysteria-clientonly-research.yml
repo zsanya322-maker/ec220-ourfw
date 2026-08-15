@@ -1,0 +1,116 @@
+name: Measure Pruned Hysteria2 Client
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v0.7b-tproxy-hy2
+    paths:
+      - '.github/workflows/hysteria-clientonly-research.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    env:
+      HY_COMMIT: 14e9fff1d972ab0187ac7fcf75b9514dc8664065
+      OURFW_IMAGE_BYTES: '6356996'
+      OURFW_SAFE_MAX_BYTES: '7798784'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: false
+
+      - name: Install measurement tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends file binutils squashfs-tools
+
+      - name: Checkout exact Hysteria2 release source
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/apernet/hysteria.git hysteria-src
+          git -C hysteria-src checkout --detach "$HY_COMMIT"
+          test "$(git -C hysteria-src rev-parse HEAD)" = "$HY_COMMIT"
+
+      - name: Prune non-client CLI commands
+        run: |
+          set -euo pipefail
+          # These files only register full-app commands/features that are not
+          # needed by an EC220 client runtime.  Keep client.go, root.go,
+          # congestion/errors, realm port mapping and update support so this
+          # remains the upstream client implementation rather than a stub.
+          rm -f \
+            hysteria-src/app/cmd/server.go \
+            hysteria-src/app/cmd/cert.go \
+            hysteria-src/app/cmd/ping.go \
+            hysteria-src/app/cmd/speedtest.go \
+            hysteria-src/app/cmd/share.go \
+            hysteria-src/app/cmd/version.go
+          printf '%s\n' 'CLIENT_PRUNE=server,cert,ping,speedtest,share,version' | tee CLIENT-PRUNE.txt
+
+      - name: Build MIPSLE soft-float client
+        run: |
+          set -euo pipefail
+          cd hysteria-src
+          export GOOS=linux
+          export GOARCH=mipsle
+          export GOMIPS=softfloat
+          export CGO_ENABLED=0
+          go build -trimpath -ldflags '-s -w' -o ../hysteria-client-pruned ./app
+          cd ..
+          file hysteria-client-pruned | tee CLIENT-FILE.txt
+          file hysteria-client-pruned | grep -Eqi 'ELF 32-bit.*LSB.*MIPS'
+          if readelf -l hysteria-client-pruned | grep -q 'INTERP'; then
+            echo 'ERROR: pruned client requires a dynamic interpreter' >&2
+            exit 72
+          fi
+          go version -m hysteria-client-pruned > CLIENT-GO-BUILD.txt
+          stat -c 'CLIENT_RAW_BYTES=%s' hysteria-client-pruned | tee CLIENT-RAW-SIZE.txt
+
+      - name: Measure Padavan-style SquashFS XZ cost
+        run: |
+          set -euo pipefail
+          mkdir -p hy-root/usr/bin
+          cp hysteria-client-pruned hy-root/usr/bin/hysteria
+          mksquashfs hy-root hysteria-client-pruned.sqfs \
+            -comp xz -b 131072 -all-root -no-exports -noappend -nopad -noI -no-xattrs
+
+          raw=$(stat -c %s hysteria-client-pruned)
+          sq=$(stat -c %s hysteria-client-pruned.sqfs)
+          headroom=$((OURFW_SAFE_MAX_BYTES - OURFW_IMAGE_BYTES))
+          projected=$((OURFW_IMAGE_BYTES + sq))
+          over=$((projected - OURFW_SAFE_MAX_BYTES))
+          if (( sq <= headroom )); then fit=YES; else fit=NO; fi
+
+          {
+            echo 'HYSTERIA_CLIENT_PRUNED_VERIFY=OK'
+            echo "UPSTREAM_COMMIT=$HY_COMMIT"
+            echo "RAW_BYTES=$raw"
+            echo "SQUASHFS_XZ_BYTES=$sq"
+            echo "CURRENT_SAFE_HEADROOM_BYTES=$headroom"
+            echo "PROJECTED_IMAGE_BYTES=$projected"
+            echo "EC220_SAFE_MAX_BYTES=$OURFW_SAFE_MAX_BYTES"
+            echo "OVER_SAFE_MAX_BYTES=$over"
+            echo "FIT_IN_CURRENT_FIRMWARE=$fit"
+          } | tee HYSTERIA-CLIENT-PRUNED-SIZE.txt
+
+      - name: Upload measurement
+        uses: actions/upload-artifact@v4
+        with:
+          name: EC220-v0.7b-Hysteria2-client-pruned
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            CLIENT-PRUNE.txt
+            CLIENT-FILE.txt
+            CLIENT-GO-BUILD.txt
+            CLIENT-RAW-SIZE.txt
+            HYSTERIA-CLIENT-PRUNED-SIZE.txt
+            hysteria-client-pruned.sqfs
