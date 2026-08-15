@@ -16,14 +16,14 @@ expected_partition_max=$((0x780000))
 (( partition_max == expected_partition_max )) || { printf 'unexpected firmware partition: %d (expected %d)\n' "$partition_max" "$expected_partition_max" >&2; exit 24; }
 safety_margin=$((64*1024)); safe_max=$((partition_max-safety_margin))
 (( size <= safe_max )) || { echo "firmware too large: $size > safe limit $safe_max" >&2; exit 25; }
-name="TL_EC220_G5-V2_OURFW-v0.4.2-${short}.bin"; cp "$fw" "$OUT/$name"
+name="TL_EC220_G5-V2_OURFW-v0.4.3-${short}.bin"; cp "$fw" "$OUT/$name"
 dd if=/dev/zero of="$OUT/128kempty.bin" bs=131072 count=1 status=none; cat "$OUT/128kempty.bin" "$OUT/$name" > "$OUT/tp_recovery.bin"; rm "$OUT/128kempty.bin"
 head -c 131072 "$OUT/tp_recovery.bin" | cmp - <(head -c 131072 /dev/zero)
 tail -c +131073 "$OUT/tp_recovery.bin" | cmp - "$OUT/$name"
 [[ $(stat -c %s "$OUT/tp_recovery.bin") -eq $((size+131072)) ]]
 sha256sum "$OUT/$name" "$OUT/tp_recovery.bin" > "$OUT/SHA256SUMS.txt"
 cat > "$OUT/BUILD-REPORT.txt" <<REPORT
-OURFW_VERSION=v0.4.2-ci-filename-hotfix
+OURFW_VERSION=v0.4.3-romfs-verify-hotfix
 DEVICE=TP-Link EC220-G5 v2
 PADAVAN_COMMIT=$actual
 WEB_IMAGE=$name

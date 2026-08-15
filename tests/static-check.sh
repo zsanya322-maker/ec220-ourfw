@@ -69,4 +69,14 @@ grep -q 'OURFW6_FWD' "$ROOT/ourfw/modules/smart-routing/apply.sh" && grep -q 'OU
   echo 'IPv6 leak guard chains missing' >&2; exit 33;
 }
 
+# Real-build regression: immutable OURFW package must create its plain-file parent,
+# and CI must inspect the built ROMFS instead of trusting Padavan's outer make loop.
+grep -q 'mkdir -p $(ROMFSDIR)/usr/share/ourfw' "$ROOT/integration/padavan-user-ourfw/Makefile" || {
+  echo 'OURFW ROMFS parent mkdir missing' >&2; exit 34;
+}
+[ -f "$ROOT/ci/verify-built-romfs.sh" ] || { echo 'built-ROMFS verifier missing' >&2; exit 35; }
+grep -q 'Verify built ROMFS' "$ROOT/.github/workflows/build-ourfw.yml" || {
+  echo 'workflow does not verify built ROMFS' >&2; exit 36;
+}
+
 echo 'STATIC CHECKS: OK'
