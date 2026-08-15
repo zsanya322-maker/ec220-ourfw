@@ -74,7 +74,7 @@ jobs:
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-          name: EC220-G5-v2-OURFW-v0.4
+          name: EC220-G5-v2-OURFW-v0.4.2
           retention-days: 14
           if-no-files-found: error
           path: |
@@ -95,3 +95,4 @@ jobs:
             PADAVAN_COMMIT_USED.txt
             TOOLCHAIN.sha256
             padavan-ng/trunk/.config
+            padavan-ng/trunk/images/*
