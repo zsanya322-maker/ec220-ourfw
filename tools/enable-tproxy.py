@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enable only the stock Linux 3.4 TPROXY/socket pieces for EC220 research.
+"""Enable the minimal stock Linux 3.4 TPROXY/socket pieces for EC220 research.
 
 This helper is intentionally separate from the stable OURFW integrator until
 hardware qualification proves the Hysteria2 TPROXY path is worth keeping.
@@ -37,11 +37,18 @@ def main() -> int:
         print(f"missing EC220 kernel config: {cfg}", file=sys.stderr)
         return 3
 
+    # Both xt_TPROXY and xt_socket are hidden behind NETFILTER_ADVANCED in the
+    # pinned Linux 3.4 Kconfig.  EC220's stock config keeps that menu disabled,
+    # so merely appending the two module symbols is silently discarded by
+    # olddefconfig.  Enable the shared prerequisite explicitly, then only the
+    # two modules needed by the transparent Hysteria2 path.
+    set_kconfig(cfg, "CONFIG_NETFILTER_ADVANCED", "y")
     set_kconfig(cfg, "CONFIG_NETFILTER_XT_TARGET_TPROXY", "m")
     set_kconfig(cfg, "CONFIG_NETFILTER_XT_MATCH_SOCKET", "m")
 
     final = cfg.read_text(errors="replace")
     for expected in (
+        "CONFIG_NETFILTER_ADVANCED=y",
         "CONFIG_NETFILTER_XT_TARGET_TPROXY=m",
         "CONFIG_NETFILTER_XT_MATCH_SOCKET=m",
         "CONFIG_IP_MULTIPLE_TABLES=y",
@@ -50,7 +57,7 @@ def main() -> int:
             print(f"TPROXY prerequisite/config missing after edit: {expected}", file=sys.stderr)
             return 4
 
-    print("EC220 TPROXY research config enabled: xt_TPROXY=m, xt_socket=m")
+    print("EC220 TPROXY research config enabled: NETFILTER_ADVANCED=y, xt_TPROXY=m, xt_socket=m")
     return 0
 
 
