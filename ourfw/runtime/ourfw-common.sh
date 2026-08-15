@@ -13,8 +13,29 @@ log() {
     [ -d "$STATE" ] && printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null)" "$*" >> "$LOG"
 }
 
+# Padavan's minimal BusyBox ash on EC220-G5 v2 is built without the POSIX
+# `command` builtin. Do not depend on that builtin anywhere in mutable runtime.
+# Resolve external executables directly through PATH instead.
+have_exec() {
+    _ourfw_name="$1"
+    case "$_ourfw_name" in
+      */*) [ -x "$_ourfw_name" ]; return $? ;;
+    esac
+    _ourfw_old_ifs="$IFS"
+    IFS=:
+    for _ourfw_dir in ${PATH:-/bin:/sbin:/usr/bin:/usr/sbin}; do
+        [ -n "$_ourfw_dir" ] || _ourfw_dir=.
+        if [ -x "$_ourfw_dir/$_ourfw_name" ]; then
+            IFS="$_ourfw_old_ifs"
+            return 0
+        fi
+    done
+    IFS="$_ourfw_old_ifs"
+    return 1
+}
+
 need() {
-    command -v "$1" >/dev/null 2>&1 || { log "missing tool: $1"; return 1; }
+    have_exec "$1" || { log "missing tool: $1"; return 1; }
 }
 
 safe_id() {
@@ -88,7 +109,7 @@ save_storage() {
 
 wan_if() {
     v=""
-    command -v nvram >/dev/null 2>&1 && v="$(nvram get wan0_ifname 2>/dev/null)"
+    have_exec nvram && v="$(nvram get wan0_ifname 2>/dev/null)"
     [ -n "$v" ] || v="$(ip -4 route show default 2>/dev/null | awk '/^default/{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1); exit}}')"
     [ -n "$v" ] || v="$(route -n 2>/dev/null | awk '$1=="0.0.0.0"{print $8; exit}')"
     printf '%s\n' "$v"
@@ -96,7 +117,7 @@ wan_if() {
 
 lan_if() {
     v=""
-    command -v nvram >/dev/null 2>&1 && v="$(nvram get lan_ifname 2>/dev/null)"
+    have_exec nvram && v="$(nvram get lan_ifname 2>/dev/null)"
     [ -n "$v" ] || v=br0
     printf '%s\n' "$v"
 }
