@@ -1,0 +1,47 @@
+#!/bin/bash
+set -euo pipefail
+TREE=${1:-padavan-ng}
+REPORT=${2:-SUBSCRIPTION-ROMFS-VERIFY.txt}
+ROMFS="$TREE/trunk/romfs"
+ARCHIVE="$ROMFS/usr/share/ourfw/defaults.tar.bz2"
+: > "$REPORT"
+log() { printf '%s\n' "$*" | tee -a "$REPORT"; }
+fail() { log 'SUBSCRIPTION_ROMFS_VERIFY=FAILED'; log "ERROR=$*"; exit 61; }
+
+[[ -s "$ARCHIVE" ]] || fail 'missing OURFW defaults archive'
+list=$(mktemp)
+trap 'rm -f "$list"' EXIT
+tar -tjf "$ARCHIVE" > "$list" || fail 'cannot list defaults archive'
+
+required=(
+  './config/subscription.conf'
+  './profiles/subscription.secret'
+  './rules/subscription.allow-hosts'
+  './modules/subscription/common.sh'
+  './modules/subscription/apply.sh'
+  './modules/subscription/start.sh'
+  './modules/subscription/fetch.sh'
+  './modules/subscription/parse.sh'
+  './modules/subscription/health.sh'
+  './modules/subscription/api.sh'
+)
+for item in "${required[@]}"; do
+  grep -qx "$item" "$list" || fail "defaults archive missing $item"
+done
+
+# Production-safe defaults are part of the packed payload, not merely source.
+tmp=$(mktemp -d)
+trap 'rm -f "$list"; rm -rf "$tmp"' EXIT
+tar -xjf "$ARCHIVE" -C "$tmp" ./config/subscription.conf ./profiles/subscription.secret ./modules/subscription/start.sh || fail 'cannot extract subscription defaults'
+grep -qx 'SUBSCRIPTION_ENABLED=0' "$tmp/config/subscription.conf" || fail 'subscription not disabled by default'
+grep -qx 'SUBSCRIPTION_REFRESH=manual' "$tmp/config/subscription.conf" || fail 'subscription refresh not manual by default'
+if grep -Ev '^[[:space:]]*(#|$)' "$tmp/profiles/subscription.secret" | grep -q .; then
+  fail 'immutable payload unexpectedly contains a provider URL/secret'
+fi
+if grep -Eq 'fetch\.sh|refresh' "$tmp/modules/subscription/start.sh"; then
+  fail 'subscription boot hook performs refresh/network work'
+fi
+
+log 'SUBSCRIPTION_ROMFS_VERIFY=OK'
+log "DEFAULTS_BYTES=$(stat -c %s "$ARCHIVE")"
+log "SUBSCRIPTION_FILES=${#required[@]}"
