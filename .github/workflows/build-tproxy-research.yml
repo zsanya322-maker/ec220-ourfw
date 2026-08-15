@@ -93,11 +93,13 @@ jobs:
           sha256sum "$fw" | tee FIRMWARE.sha256
           stat -c 'FIRMWARE_BYTES=%s' "$fw" | tee FIRMWARE-SIZE.txt
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload TPROXY result or diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: EC220-v0.7.0-TPROXY-RESEARCH
           retention-days: 14
-          if-no-files-found: error
+          if-no-files-found: warn
           path: |
             dist/*
             build.log
