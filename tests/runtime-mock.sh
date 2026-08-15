@@ -34,6 +34,57 @@ $ETC/runtime/ourfw-transfer.sh stage routing-config >/dev/null
 cmp /tmp/ourfw-v05-routing.conf /tmp/ourfw/webedit/routing-config
 $ETC/runtime/ourfw-transfer.sh section-abort routing >/dev/null
 
+# v0.6 transfer validation: ZRAM config stages as data, while unsafe OpenVPN
+# control directives are rejected before any network apply.
+cp "$ETC/config/zram.conf" "$TESTROOT/zram.conf"
+sed -i 's/^ZRAM_MODE=.*/ZRAM_MODE=off/' "$TESTROOT/zram.conf"
+sha=$(sha256sum "$TESTROOT/zram.conf" | awk '{print $1}')
+enc=$(base64 -w0 "$TESTROOT/zram.conf" | tr '/+' '_-' | tr -d '=')
+$ETC/runtime/ourfw-transfer.sh begin zram-config "$sha" >/dev/null
+while [[ -n "$enc" ]]; do c=${enc:0:900}; enc=${enc:900}; $ETC/runtime/ourfw-transfer.sh chunk zram-config "$c" >/dev/null; done
+$ETC/runtime/ourfw-transfer.sh stage zram-config >/dev/null
+cmp "$TESTROOT/zram.conf" /tmp/ourfw/webedit/zram-config
+$ETC/runtime/ourfw-transfer.sh section-abort zram >/dev/null
+
+cat > "$TESTROOT/bad.ovpn" <<'EOF'
+client
+remote vpn.example 1194
+script-security 2
+up /tmp/evil
+EOF
+sha=$(sha256sum "$TESTROOT/bad.ovpn" | awk '{print $1}')
+enc=$(base64 -w0 "$TESTROOT/bad.ovpn" | tr '/+' '_-' | tr -d '=')
+$ETC/runtime/ourfw-transfer.sh begin openvpn-profile "$sha" >/dev/null
+while [[ -n "$enc" ]]; do c=${enc:0:900}; enc=${enc:900}; $ETC/runtime/ourfw-transfer.sh chunk openvpn-profile "$c" >/dev/null; done
+set +e
+$ETC/runtime/ourfw-transfer.sh stage openvpn-profile >/dev/null 2>&1
+badrc=$?
+set -e
+[[ $badrc -ne 0 ]]
+$ETC/runtime/ourfw-transfer.sh abort openvpn-profile >/dev/null 2>&1 || true
+
+# OpenVPN option containers must not bypass the sanitizer.
+cat > "$TESTROOT/bad-block.ovpn" <<'EOF'
+client
+remote vpn.example 1194
+<connection>
+remote backup.example 443
+up /tmp/evil
+</connection>
+EOF
+sha=$(sha256sum "$TESTROOT/bad-block.ovpn" | awk '{print $1}')
+enc=$(base64 -w0 "$TESTROOT/bad-block.ovpn" | tr '/+' '_-' | tr -d '=')
+$ETC/runtime/ourfw-transfer.sh begin openvpn-profile "$sha" >/dev/null
+while [[ -n "$enc" ]]; do c=${enc:0:900}; enc=${enc:900}; $ETC/runtime/ourfw-transfer.sh chunk openvpn-profile "$c" >/dev/null; done
+set +e
+$ETC/runtime/ourfw-transfer.sh stage openvpn-profile >/dev/null 2>&1
+badrc=$?
+set -e
+[[ $badrc -ne 0 ]]
+$ETC/runtime/ourfw-transfer.sh abort openvpn-profile >/dev/null 2>&1 || true
+
+$ETC/runtime/ourfwctl.sh status-json | python3 -c 'import json,sys; j=json.load(sys.stdin); assert "adblock_enabled" in j and "zram_mode" in j and "openvpn_cap" in j'
+
 # backup archive validation
 b=$($ETC/runtime/ourfw-backup.sh export | tail -n1)
 $ETC/runtime/ourfw-backup.sh verify "$b"

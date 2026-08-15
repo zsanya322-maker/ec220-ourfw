@@ -24,8 +24,12 @@ case "$OUT" in /tmp/*) ;; *) echo "diagnostic output must be /tmp" >&2; exit 2;;
   ip route show table 100 2>/dev/null
   echo
   echo "=== VPN ==="
+  echo "active_type=$(active_vpn_type) active_if=$(active_vpn_if)"
   wg show 2>/dev/null || true
   awg show 2>/dev/null || true
+  echo "-- OpenVPN --"
+  ps 2>/dev/null | grep '[o]penvpn' || true
+  tail -n 80 "$STATE/openvpn.log" 2>/dev/null || true
   echo
   echo "=== IPSETS ==="
   ipset list ourfw_vpn4 2>/dev/null || true
@@ -34,6 +38,19 @@ case "$OUT" in /tmp/*) ;; *) echo "diagnostic output must be /tmp" >&2; exit 2;;
   echo "=== OURFW IPTABLES ==="
   iptables -t mangle -S OURFW_ROUTE 2>/dev/null || true
   iptables -t filter -S OURFW_KILL 2>/dev/null || true
+  echo
+  echo "=== ADBLOCK ==="
+  cat "$STATE/adblock.status" 2>/dev/null || true
+  echo "runtime_lines=$(wc -l < "$STATE/adblock-dnsmasq.conf" 2>/dev/null || echo 0)"
+  echo
+  echo "=== ZRAM / SWAP ==="
+  cat "$STATE/zram.status" 2>/dev/null || true
+  cat /proc/swaps 2>/dev/null || true
+  echo
+  echo "=== PADAVAN INTERNET DETECT ==="
+  printf 'link_internet='; nvram get link_internet 2>/dev/null || true
+  cat "$STATE/inet-state" 2>/dev/null || true
+  ps 2>/dev/null | grep '[d]etect_internet' || true
   echo
   echo "=== NFQWS ==="
   pidof nfqws 2>/dev/null || true

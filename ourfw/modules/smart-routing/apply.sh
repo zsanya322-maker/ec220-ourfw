@@ -6,6 +6,9 @@ VPN_IPSET=ourfw_vpn4; DIRECT_IPSET=ourfw_direct4
 load_conf "$CFG" || exit 1
 VPN_ENABLED=0; VPN_USE_PEER_DNS=0
 [ -f "$OURFW/config/vpn.conf" ] && load_conf "$OURFW/config/vpn.conf" || exit 1
+# VPN module publishes the actual runtime interface (wg0 or tun0). Failover is
+# therefore transparent to Smart Routing and kill-switch rules.
+VPN_INTERFACE="$(active_vpn_if)"
 case "$ROUTING_MODE" in off|smart|vpn-all) ;; *) log "routing: invalid mode"; exit 1;; esac
 is_uint "$ROUTE_TABLE" || exit 1; is_uint "$RULE_PREF" || exit 1; bool01 "$KILLSWITCH" || exit 1; bool01 "$VPN_ENABLED" || exit 1; bool01 "$VPN_USE_PEER_DNS" || exit 1
 case "$IPV6_POLICY" in block|native) ;; *) log "routing: invalid IPV6_POLICY"; exit 1;; esac
@@ -45,8 +48,9 @@ iptables -t mangle -N OURFW_ROUTE >/dev/null 2>&1 || exit 1
 iptables -t mangle -A PREROUTING -j OURFW_ROUTE
 iptables -t mangle -A OUTPUT -j OURFW_ROUTE
 if [ -s "$STATE/vpn-endpoint4" ]; then
-    ep4="$(head -n1 "$STATE/vpn-endpoint4" 2>/dev/null)"
-    case "$ep4" in *[!0-9.]*) log "routing: ignored invalid endpoint cache";; *) iptables -t mangle -A OURFW_ROUTE -d "$ep4" -j RETURN;; esac
+    while IFS= read -r ep4; do
+        case "$ep4" in ''|*[!0-9.]*) log "routing: ignored invalid endpoint cache";; *) iptables -t mangle -A OURFW_ROUTE -d "$ep4" -j RETURN;; esac
+    done < "$STATE/vpn-endpoint4"
 fi
 # Peer DNS is part of the VPN contract. Mark its IPv4 DNS traffic before the
 # generic private/direct exclusions so a provider DNS such as 10.0.0.1 cannot
@@ -101,8 +105,9 @@ if [ "$IPV6_POLICY" = "block" ] && [ "$VPN_ENABLED" = "1" ]; then
     done
     # Allow the encrypted IPv6 transport endpoint to remain direct.
     if [ -s "$STATE/vpn-endpoint6" ]; then
-        ep6="$(head -n1 "$STATE/vpn-endpoint6" 2>/dev/null)"
-        case "$ep6" in *[!0-9A-Fa-f:.]*) log "routing: ignored invalid IPv6 endpoint cache";; *) ip6tables -t filter -A OURFW6_OUT -d "$ep6" -j RETURN;; esac
+        while IFS= read -r ep6; do
+            case "$ep6" in ''|*[!0-9A-Fa-f:]*) log "routing: ignored invalid IPv6 endpoint cache";; *) ip6tables -t filter -A OURFW6_OUT -d "$ep6" -j RETURN;; esac
+        done < "$STATE/vpn-endpoint6"
     fi
     ip6tables -t filter -A OURFW6_FWD -o "$VPN_INTERFACE" -j RETURN
     ip6tables -t filter -A OURFW6_FWD -i "$LAN_IF" -j REJECT

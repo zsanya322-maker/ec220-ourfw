@@ -45,12 +45,12 @@ install_candidate() {
         [ -f "$src" ] || { log "candidate: source missing"; return 1; }
         case "$src" in /tmp/ourfw-*|/tmp/ourfw/*) ;; *) log "candidate: unsafe source"; return 1;; esac
         case "$rel" in
-          config/*.conf|profiles/vpn.conf|profiles/nfqws.strategy|rules/*.list|dnsmasq-ourfw.conf) ;;
+          config/*.conf|profiles/vpn.conf|profiles/openvpn.ovpn|profiles/openvpn.auth|profiles/nfqws.strategy|rules/*.list|dnsmasq-ourfw.conf) ;;
           *) log "candidate: unsafe destination $rel"; return 1;;
         esac
         dst="$OURFW/$rel"; mkdir -p "$(dirname "$dst")" || return 1
         tmp="$dst.candidate.$$"; cp "$src" "$tmp" || return 1
-        case "$rel" in profiles/vpn.conf) chmod 600 "$tmp" 2>/dev/null || true;; *) chmod 644 "$tmp" 2>/dev/null || true;; esac
+        case "$rel" in profiles/vpn.conf|profiles/openvpn.ovpn|profiles/openvpn.auth|config/vpn.conf) chmod 600 "$tmp" 2>/dev/null || true;; *) chmod 644 "$tmp" 2>/dev/null || true;; esac
         mv "$tmp" "$dst" || return 1
         log "candidate installed: $rel"
     fi
@@ -69,7 +69,7 @@ install_candidate() {
                 rel=${src#"$stage"/}; dst="$OURFW/$rel"
                 mkdir -p "$(dirname "$dst")" || exit 1
                 tmp="$dst.candidate.$$"; cp "$src" "$tmp" || exit 1
-                case "$rel" in profiles/vpn.conf) chmod 600 "$tmp" 2>/dev/null || true;; *) chmod 644 "$tmp" 2>/dev/null || true;; esac
+                case "$rel" in profiles/vpn.conf|profiles/openvpn.ovpn|profiles/openvpn.auth|config/vpn.conf) chmod 600 "$tmp" 2>/dev/null || true;; *) chmod 644 "$tmp" 2>/dev/null || true;; esac
                 mv "$tmp" "$dst" || exit 1
             done || { rm -rf "$stage"; return 1; }
         done
@@ -87,14 +87,15 @@ install_candidate() {
         rm -rf "$OURFW/config" "$OURFW/profiles" "$OURFW/rules"
         cp -a "$stage/config" "$stage/profiles" "$stage/rules" "$OURFW/" || { rm -rf "$stage"; return 1; }
         find "$OURFW" -type f -name '*.sh' -exec chmod 755 {} \; 2>/dev/null || true
-        [ -f "$OURFW/profiles/vpn.conf" ] && chmod 600 "$OURFW/profiles/vpn.conf" 2>/dev/null || true
+        for sf in "$OURFW/config/vpn.conf" "$OURFW/profiles/vpn.conf" "$OURFW/profiles/openvpn.ovpn" "$OURFW/profiles/openvpn.auth"; do [ -f "$sf" ] && chmod 600 "$sf" 2>/dev/null || true; done
         rm -rf "$stage"
         log "backup candidate installed"
     fi
 }
 
 apply_modules() {
-    for m in vpn smart-routing dns nfqws watchdog diagnostics; do
+    rm -f "$STATE/vpn-override-type" 2>/dev/null || true
+    for m in zram vpn smart-routing adblock dns nfqws watchdog diagnostics; do
         hook="$OURFW/modules/$m/apply.sh"; [ -x "$hook" ] || continue
         log "apply module: $m"; "$hook" || return 1
     done

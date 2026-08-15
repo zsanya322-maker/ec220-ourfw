@@ -1,0 +1,3 @@
+# One HTTPS URL per line. Hagezi Mini is intentionally small; OURFW also caps
+# the merged result to ADBLOCK_MAX_DOMAINS to protect this 64MB router.
+https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/mini.txt

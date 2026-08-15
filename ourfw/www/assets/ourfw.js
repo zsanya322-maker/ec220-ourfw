@@ -28,8 +28,11 @@
     try{
       const j=await call({action:'status'});csrf=j.csrf||csrf;
       text('#version',j.version||'dev');text('#wan',j.wan_if||'—');text('#routing-mode',j.routing_mode||'—');
-      text('#vpn-state',j.vpn_enabled?(j.vpn_up?'работает':'включён / tunnel down'):'выключен');
+      text('#vpn-state',j.vpn_enabled?((j.vpn_type||'VPN')+': '+(j.vpn_up?'работает':'tunnel down')):'выключен');
       text('#nfqws-state',j.nfqws_enabled?(j.nfqws_up?'работает':'включён / process down'):'выключен');
+      text('#adblock-state',j.adblock_enabled?((j.adblock_domains||0)+' доменов'):'выключен');
+      text('#zram-state',j.zram_active?((j.zram_mode||'auto')+' / active'):(j.zram_mode||'off'));
+      text('#cap-https',j.https_cap?'есть':'нет');text('#cap-sftp',j.sftp_cap?'есть':'нет');text('#cap-openvpn',j.openvpn_cap?'есть':'нет');
       const pill=q('#pending-pill');pill.classList.toggle('hidden',!j.pending);
     }catch(e){show('API недоступен: '+e.message,true);}
   }
@@ -97,8 +100,10 @@
     value('#vpn-domains',vd);value('#direct-domains',dd);value('#vpn-ips',vi);value('#direct-ips',di);
   }
   async function loadVpn(){
-    const [cfg,profile]=await Promise.allSequential([()=>getFile('vpn-config'),()=>getFile('vpn-profile')]);
-    value('#vpn-type',kvGet(cfg,'VPN_TYPE','wireguard'));checked('#vpn-peer-dns',kvGet(cfg,'VPN_USE_PEER_DNS','0')==='1');value('#vpn-profile',profile);
+    const [cfg,wg,ovpn,auth]=await Promise.allSequential([()=>getFile('vpn-config'),()=>getFile('vpn-profile'),()=>getFile('openvpn-profile'),()=>getFile('openvpn-auth')]);
+    value('#vpn-type',kvGet(cfg,'VPN_TYPE','wireguard'));checked('#vpn-peer-dns',kvGet(cfg,'VPN_USE_PEER_DNS','0')==='1');
+    checked('#vpn-failover',kvGet(cfg,'VPN_FAILOVER_ENABLED','0')==='1');value('#vpn-failover-type',kvGet(cfg,'VPN_FAILOVER_TYPE','openvpn'));
+    value('#vpn-profile',wg);value('#openvpn-profile',ovpn);value('#openvpn-auth',auth);
   }
   async function loadNfqws(){
     const [cfg,strat,user,exc,auto]=await Promise.allSequential([
@@ -109,13 +114,31 @@
   async function loadDns(){
     const [cfg,servers]=await Promise.allSequential([()=>getFile('dns-config'),()=>getFile('dns-servers')]);checked('#dns-enabled',kvGet(cfg,'DNS_ENABLED','1')==='1');value('#dns-servers',servers);
   }
-  async function loadWatchdog(){
-    const cfg=await getFile('watchdog-config');checked('#wd-enabled',kvGet(cfg,'WATCHDOG_ENABLED','0')==='1');value('#wd-interval',kvGet(cfg,'WATCHDOG_INTERVAL','30'));value('#wd-fails',kvGet(cfg,'WATCHDOG_FAILS','3'));value('#wd-scope',kvGet(cfg,'WATCHDOG_SCOPE','all'));value('#wd-ping1',kvGet(cfg,'PING_TARGET1','1.1.1.1'));value('#wd-ping2',kvGet(cfg,'PING_TARGET2','8.8.8.8'));value('#wd-vpn-target',kvGet(cfg,'WATCHDOG_VPN_TARGET','1.1.1.1'));value('#wd-handshake',kvGet(cfg,'WATCHDOG_VPN_HANDSHAKE_MAX_AGE','180'));checked('#wd-reboot',kvGet(cfg,'WATCHDOG_REBOOT','0')==='1');
+  async function loadAdblock(){
+    const [cfg,sources,allow,deny]=await Promise.allSequential([()=>getFile('adblock-config'),()=>getFile('adblock-sources'),()=>getFile('adblock-allow'),()=>getFile('adblock-deny')]);
+    checked('#ab-enabled',kvGet(cfg,'ADBLOCK_ENABLED','0')==='1');value('#ab-max',kvGet(cfg,'ADBLOCK_MAX_DOMAINS','15000'));value('#ab-hours',kvGet(cfg,'ADBLOCK_REFRESH_HOURS','24'));checked('#ab-querylog',kvGet(cfg,'ADBLOCK_QUERY_LOG','0')==='1');
+    value('#ab-sources',sources);value('#ab-allow',allow);value('#ab-deny',deny);
+    try{const j=await call({action:'module',p1:'adblock',p2:'status'},'POST');text('#ab-count',String(j.domains||0));text('#ab-bytes',humanBytes(j.bytes||0));text('#ab-updated',formatEpoch(j.updated||0));}catch(_){}
   }
+  async function loadWatchdog(){
+    const cfg=await getFile('watchdog-config');checked('#wd-enabled',kvGet(cfg,'WATCHDOG_ENABLED','0')==='1');value('#wd-interval',kvGet(cfg,'WATCHDOG_INTERVAL','30'));value('#wd-fails',kvGet(cfg,'WATCHDOG_FAILS','3'));value('#wd-scope',kvGet(cfg,'WATCHDOG_SCOPE','all'));value('#wd-ping1',kvGet(cfg,'PING_TARGET1','1.1.1.1'));value('#wd-ping2',kvGet(cfg,'PING_TARGET2','8.8.8.8'));value('#wd-vpn-target',kvGet(cfg,'WATCHDOG_VPN_TARGET','1.1.1.1'));value('#wd-handshake',kvGet(cfg,'WATCHDOG_VPN_HANDSHAKE_MAX_AGE','180'));checked('#wd-inetdetect',kvGet(cfg,'WATCHDOG_USE_INETDETECT','1')==='1');value('#wd-inet-age',kvGet(cfg,'WATCHDOG_INETDETECT_MAX_AGE','180'));checked('#wd-reboot',kvGet(cfg,'WATCHDOG_REBOOT','0')==='1');
+  }
+  async function loadZram(){
+    const cfg=await getFile('zram-config');value('#zram-mode',kvGet(cfg,'ZRAM_MODE','auto'));value('#zram-algo',kvGet(cfg,'ZRAM_ALGO','auto'));
+  }
+
+  function humanBytes(n){n=Number(n)||0;if(n<1024)return n+' B';if(n<1048576)return (n/1024).toFixed(1)+' KiB';return (n/1048576).toFixed(1)+' MiB';}
+  function formatEpoch(n){n=Number(n)||0;if(!n)return 'ещё не обновлялся';try{return new Date(n*1000).toLocaleString();}catch(_){return String(n);}}
 
   // Sequential helper avoids races through Padavan's single /tmp API response file.
   Promise.allSequential=async fs=>{const r=[];for(const f of fs)r.push(await f());return r;};
-  async function ensureLoaded(section){if(!section||loaded.has(section))return;show('Загружаю настройки…');try{if(section==='routing')await loadRouting();if(section==='vpn')await loadVpn();if(section==='nfqws')await loadNfqws();if(section==='dns')await loadDns();if(section==='watchdog')await loadWatchdog();loaded.add(section);show('Настройки загружены.');}catch(e){show('Не удалось загрузить настройки: '+e.message,true);}}
+  async function ensureLoaded(section){
+    if(!section||loaded.has(section))return;show('Загружаю настройки…');
+    try{
+      if(section==='routing')await loadRouting();if(section==='vpn')await loadVpn();if(section==='nfqws')await loadNfqws();if(section==='dns')await loadDns();if(section==='adblock')await loadAdblock();if(section==='watchdog')await loadWatchdog();if(section==='zram')await loadZram();
+      loaded.add(section);show('Настройки загружены.');
+    }catch(e){show('Не удалось загрузить настройки: '+e.message,true);}
+  }
 
   async function saveNamed(section){
     if(section==='routing'){
@@ -123,8 +146,8 @@
       return saveSection('routing',{'routing-config':c,'vpn-domains':q('#vpn-domains').value,'direct-domains':q('#direct-domains').value,'vpn-ips':q('#vpn-ips').value,'direct-ips':q('#direct-ips').value});
     }
     if(section==='vpn'){
-      let c=files['vpn-config']||'';c=kvSet(c,'VPN_TYPE',q('#vpn-type').value);c=kvSet(c,'VPN_USE_PEER_DNS',q('#vpn-peer-dns').checked?'1':'0');
-      return saveSection('vpn',{'vpn-config':c,'vpn-profile':q('#vpn-profile').value});
+      let c=files['vpn-config']||'';c=kvSet(c,'VPN_TYPE',q('#vpn-type').value);c=kvSet(c,'VPN_USE_PEER_DNS',q('#vpn-peer-dns').checked?'1':'0');c=kvSet(c,'VPN_FAILOVER_ENABLED',q('#vpn-failover').checked?'1':'0');c=kvSet(c,'VPN_FAILOVER_TYPE',q('#vpn-failover-type').value);
+      return saveSection('vpn',{'vpn-config':c,'vpn-profile':q('#vpn-profile').value,'openvpn-profile':q('#openvpn-profile').value,'openvpn-auth':q('#openvpn-auth').value});
     }
     if(section==='nfqws'){
       let c=files['nfqws-config']||'';c=kvSet(c,'NFQWS_WAN_IF',q('#nfqws-wan').value.trim());c=kvSet(c,'NFQWS_LOG',q('#nfqws-log').checked?'1':'0');
@@ -133,8 +156,15 @@
     if(section==='dns'){
       let c=files['dns-config']||'';c=kvSet(c,'DNS_ENABLED',q('#dns-enabled').checked?'1':'0');return saveSection('dns',{'dns-config':c,'dns-servers':q('#dns-servers').value});
     }
+    if(section==='adblock'){
+      let c=files['adblock-config']||'';const pairs={ADBLOCK_ENABLED:q('#ab-enabled').checked?'1':'0',ADBLOCK_MAX_DOMAINS:q('#ab-max').value,ADBLOCK_REFRESH_HOURS:q('#ab-hours').value,ADBLOCK_QUERY_LOG:q('#ab-querylog').checked?'1':'0'};for(const [k,v] of Object.entries(pairs))c=kvSet(c,k,v);
+      return saveSection('adblock',{'adblock-config':c,'adblock-sources':q('#ab-sources').value,'adblock-allow':q('#ab-allow').value,'adblock-deny':q('#ab-deny').value});
+    }
     if(section==='watchdog'){
-      let c=files['watchdog-config']||'';const pairs={WATCHDOG_ENABLED:q('#wd-enabled').checked?'1':'0',WATCHDOG_INTERVAL:q('#wd-interval').value,WATCHDOG_FAILS:q('#wd-fails').value,WATCHDOG_SCOPE:q('#wd-scope').value,PING_TARGET1:q('#wd-ping1').value.trim(),PING_TARGET2:q('#wd-ping2').value.trim(),WATCHDOG_REBOOT:q('#wd-reboot').checked?'1':'0',WATCHDOG_VPN_TARGET:q('#wd-vpn-target').value.trim(),WATCHDOG_VPN_HANDSHAKE_MAX_AGE:q('#wd-handshake').value};for(const [k,v] of Object.entries(pairs))c=kvSet(c,k,v);return saveSection('watchdog',{'watchdog-config':c});
+      let c=files['watchdog-config']||'';const pairs={WATCHDOG_ENABLED:q('#wd-enabled').checked?'1':'0',WATCHDOG_INTERVAL:q('#wd-interval').value,WATCHDOG_FAILS:q('#wd-fails').value,WATCHDOG_SCOPE:q('#wd-scope').value,PING_TARGET1:q('#wd-ping1').value.trim(),PING_TARGET2:q('#wd-ping2').value.trim(),WATCHDOG_REBOOT:q('#wd-reboot').checked?'1':'0',WATCHDOG_VPN_TARGET:q('#wd-vpn-target').value.trim(),WATCHDOG_VPN_HANDSHAKE_MAX_AGE:q('#wd-handshake').value,WATCHDOG_USE_INETDETECT:q('#wd-inetdetect').checked?'1':'0',WATCHDOG_INETDETECT_MAX_AGE:q('#wd-inet-age').value};for(const [k,v] of Object.entries(pairs))c=kvSet(c,k,v);return saveSection('watchdog',{'watchdog-config':c});
+    }
+    if(section==='zram'){
+      let c=files['zram-config']||'';c=kvSet(c,'ZRAM_MODE',q('#zram-mode').value);c=kvSet(c,'ZRAM_ALGO',q('#zram-algo').value);return saveSection('zram',{'zram-config':c});
     }
   }
 
@@ -144,12 +174,19 @@
   }
   async function uploadSpecial(target,file){if(!file)throw new Error('Сначала выбери файл');const u=new Uint8Array(await file.arrayBuffer());show('Загружаю '+file.name+' ('+u.length+' байт)…');const j=await uploadBytes(target,u,'file-commit');show('Пакет применён как кандидат. Проверь работу и подтверди.\n'+JSON.stringify(j,null,2));await status();}
 
+  async function moduleAction(mod,op){
+    const j=await action('module',mod,op);
+    if(mod==='adblock'){loaded.delete('adblock');await ensureLoaded('adblock');}
+    if(mod==='zram'){loaded.delete('zram');await ensureLoaded('zram');}
+    return j;
+  }
+
   document.addEventListener('click',async e=>{
     const t=e.target.closest('button');if(!t)return;
     try{
       if(t.dataset.tab){qa('.tab,.view').forEach(x=>x.classList.remove('active'));t.classList.add('active');const v=q('#'+t.dataset.tab);v.classList.add('active');await ensureLoaded(v.dataset.load);return;}
       if(t.dataset.action){await action(t.dataset.action);return;}
-      if(t.dataset.module){await action('module',t.dataset.module,t.dataset.op||'status');return;}
+      if(t.dataset.module){await moduleAction(t.dataset.module,t.dataset.op||'status');return;}
       if(t.dataset.saveSection){await saveNamed(t.dataset.saveSection);return;}
       if(t.dataset.download){await exportDownload(t.dataset.download);return;}
     }catch(_){/* already shown */}

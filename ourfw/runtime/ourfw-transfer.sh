@@ -14,9 +14,13 @@ target_info() {
     TARGET="$1"; REL=; KIND=; MAX=; KEYS=
     case "$TARGET" in
       vpn-config)
-        REL=config/vpn.conf; KIND=kv; MAX=4096; KEYS='VPN_ENABLED VPN_TYPE VPN_INTERFACE VPN_PROFILE VPN_USE_PEER_DNS' ;;
+        REL=config/vpn.conf; KIND=kv; MAX=4096; KEYS='VPN_ENABLED VPN_TYPE VPN_INTERFACE VPN_PROFILE VPN_OPENVPN_PROFILE VPN_OPENVPN_AUTH VPN_USE_PEER_DNS VPN_FAILOVER_ENABLED VPN_FAILOVER_TYPE' ;;
       vpn-profile)
         REL=profiles/vpn.conf; KIND=vpn; MAX=16384 ;;
+      openvpn-profile)
+        REL=profiles/openvpn.ovpn; KIND=openvpn; MAX=32768 ;;
+      openvpn-auth)
+        REL=profiles/openvpn.auth; KIND=auth; MAX=4096 ;;
       routing-config)
         REL=config/routing.conf; KIND=kv; MAX=4096; KEYS='ROUTING_MODE VPN_INTERFACE ROUTE_TABLE FWMARK FWMASK RULE_PREF KILLSWITCH IPV6_POLICY VPN_IPSET DIRECT_IPSET' ;;
       vpn-domains)
@@ -42,7 +46,17 @@ target_info() {
       dns-servers)
         REL=rules/dns-servers.list; KIND=dns; MAX=8192 ;;
       watchdog-config)
-        REL=config/watchdog.conf; KIND=kv; MAX=4096; KEYS='WATCHDOG_ENABLED WATCHDOG_INTERVAL WATCHDOG_FAILS WATCHDOG_SCOPE PING_TARGET1 PING_TARGET2 WATCHDOG_REBOOT WATCHDOG_VPN_TARGET WATCHDOG_VPN_HANDSHAKE_MAX_AGE' ;;
+        REL=config/watchdog.conf; KIND=kv; MAX=4096; KEYS='WATCHDOG_ENABLED WATCHDOG_INTERVAL WATCHDOG_FAILS WATCHDOG_SCOPE PING_TARGET1 PING_TARGET2 WATCHDOG_REBOOT WATCHDOG_VPN_TARGET WATCHDOG_VPN_HANDSHAKE_MAX_AGE WATCHDOG_USE_INETDETECT WATCHDOG_INETDETECT_MAX_AGE' ;;
+      adblock-config)
+        REL=config/adblock.conf; KIND=kv; MAX=4096; KEYS='ADBLOCK_ENABLED ADBLOCK_SOURCES_FILE ADBLOCK_ALLOW_FILE ADBLOCK_DENY_FILE ADBLOCK_MAX_DOMAINS ADBLOCK_REFRESH_HOURS ADBLOCK_QUERY_LOG' ;;
+      adblock-sources)
+        REL=rules/adblock-sources.list; KIND=urls; MAX=16384 ;;
+      adblock-allow)
+        REL=rules/adblock-allow.list; KIND=domains; MAX=32768 ;;
+      adblock-deny)
+        REL=rules/adblock-deny.list; KIND=domains; MAX=32768 ;;
+      zram-config)
+        REL=config/zram.conf; KIND=kv; MAX=4096; KEYS='ZRAM_MODE ZRAM_ALGO' ;;
       component-package)
         KIND=component; MAX=131072 ;;
       backup-import)
@@ -55,10 +69,12 @@ stage_dir() { printf '%s/%s\n' "$XFER" "$TARGET"; }
 section_targets() {
     case "$1" in
       routing) printf '%s\n' 'routing-config vpn-domains direct-domains vpn-ips direct-ips' ;;
-      vpn) printf '%s\n' 'vpn-config vpn-profile' ;;
+      vpn) printf '%s\n' 'vpn-config vpn-profile openvpn-profile openvpn-auth' ;;
       nfqws) printf '%s\n' 'nfqws-config nfqws-strategy nfqws-user nfqws-exclude nfqws-auto' ;;
       dns) printf '%s\n' 'dns-config dns-servers' ;;
       watchdog) printf '%s\n' 'watchdog-config' ;;
+      adblock) printf '%s\n' 'adblock-config adblock-sources adblock-allow adblock-deny' ;;
+      zram) printf '%s\n' 'zram-config' ;;
       *) return 1 ;;
     esac
 }
@@ -135,6 +151,42 @@ validate_vpn() {
     return 0
 }
 
+validate_urls() {
+    f="$1"; validate_no_nul "$f" || return 1
+    strip_list "$f" | while IFS= read -r u; do
+        case "$u" in
+          https://*) ;;
+          *) return 1 ;;
+        esac
+        printf '%s\n' "$u" | grep -Eq '^https://[^[:space:]]+$' || return 1
+    done
+}
+
+validate_auth() {
+    f="$1"; validate_no_nul "$f" || return 1
+    # OpenVPN auth file is exactly username + password; no empty values.
+    n=$(awk 'NF{n++} END{print n+0}' "$f")
+    [ "$n" -eq 0 ] || [ "$n" -eq 2 ] || return 1
+    LC_ALL=C grep -q '[[:cntrl:]]' "$f" 2>/dev/null && {
+        tr -d '\r\n\t' < "$f" | LC_ALL=C grep -q '[[:cntrl:]]' && return 1 || true
+    }
+    return 0
+}
+
+validate_openvpn() {
+    f="$1"; validate_no_nul "$f" || return 1
+    [ ! -s "$f" ] && return 0
+    grep -Eiq '^[[:space:]]*(client|tls-client)([[:space:]]|$)' "$f" || return 1
+    grep -Eiq '^[[:space:]]*remote[[:space:]]+[^[:space:]]+' "$f" || return 1
+    # Runtime repeats this check. Reject command/plugin/control surfaces at upload too.
+    if grep -Eiq '^[[:space:]]*(up|down|route-up|route-pre-down|ipchange|client-connect|client-disconnect|learn-address|auth-user-pass-verify|plugin|script-security|management|management-client-user|management-client-group|config|cd|chroot|daemon|writepid|log|log-append|status|user|group)([[:space:]]|$)' "$f"; then return 1; fi
+    # Only PEM/key data blocks are accepted. In particular, reject OpenVPN's
+    # <connection> option container so directives cannot hide from the line sanitizer.
+    badtag="$(grep -Ei '^[[:space:]]*</?[A-Za-z0-9_-]+>[[:space:]]*$' "$f" 2>/dev/null | sed 's/^[[:space:]]*<//;s#^/##;s/>[[:space:]]*$//' | tr 'A-Z' 'a-z' | grep -Ev '^(ca|cert|key|pkcs12|tls-auth|tls-crypt|tls-crypt-v2|crl-verify)$' | head -n1)"
+    [ -z "$badtag" ] || return 1
+    return 0
+}
+
 validate_textlist() {
     validate_no_nul "$1" || return 1
     # Lists are data files consumed by zapret.  Forbid control characters other
@@ -155,6 +207,9 @@ validate_candidate() {
       ipv4nets) validate_no_nul "$f" && validate_ipv4nets "$f" ;;
       dns) validate_no_nul "$f" && validate_dns "$f" ;;
       vpn) validate_vpn "$f" ;;
+      openvpn) validate_openvpn "$f" ;;
+      auth) validate_auth "$f" ;;
+      urls) validate_urls "$f" ;;
       text|textlist) validate_textlist "$f" ;;
       component|backup) return 0 ;;
       *) return 1 ;;

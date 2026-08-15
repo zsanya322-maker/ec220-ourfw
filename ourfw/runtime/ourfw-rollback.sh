@@ -13,7 +13,7 @@ snapshot_good() {
     mv "$tmp" "$STATE/last-good.tar"
 }
 reapply() {
-    for m in vpn smart-routing dns nfqws watchdog diagnostics; do
+    for m in zram vpn smart-routing adblock dns nfqws watchdog diagnostics; do
         hook="$OURFW/modules/$m/apply.sh"; [ -x "$hook" ] && "$hook" || true
     done
 }
@@ -37,7 +37,8 @@ case "${1:-}" in
     [ -f "$STATE/last-good.tar" ] || { log "rollback requested but no last-good snapshot"; exit 1; }
     rm -rf "$OURFW/config" "$OURFW/profiles" "$OURFW/rules"; mkdir -p "$OURFW/config" "$OURFW/profiles" "$OURFW/rules"
     tar -xf "$STATE/last-good.tar" -C "$OURFW" || exit 1
-    rm -f "$STATE/pending"; reapply
+    for sf in "$OURFW/config/vpn.conf" "$OURFW/profiles/vpn.conf" "$OURFW/profiles/openvpn.ovpn" "$OURFW/profiles/openvpn.auth"; do [ -f "$sf" ] && chmod 600 "$sf" 2>/dev/null || true; done
+    rm -f "$STATE/vpn-override-type" "$STATE/pending"; reapply
     log "automatic rollback completed"; echo "ROLLED_BACK=1" ;;
   *) echo "usage: ourfw-rollback.sh {baseline|confirm|now}" >&2; exit 2 ;;
 esac

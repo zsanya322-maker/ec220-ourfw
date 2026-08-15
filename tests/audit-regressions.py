@@ -73,5 +73,5 @@ must('PADAVAN_TOOLCHAIN_SIZE="33636652"' in v, 'toolchain size pin missing')
 must('sha256sum -c -' in wf and 'PADAVAN_TOOLCHAIN_SIZE' in wf, 'CI does not enforce toolchain pin')
 # 15 actual tunnel liveness
 wd=txt('ourfw/modules/watchdog/watchdog.sh')
-must('ping -I "$VPN_INTERFACE"' in wd and 'latest-handshakes' in wd, 'watchdog still checks only interface existence')
+must('ping -I "$iface"' in wd and 'latest-handshakes' in wd and 'active_vpn_if' in wd, 'watchdog still checks only interface existence')
 print('AUDIT REGRESSIONS: OK')

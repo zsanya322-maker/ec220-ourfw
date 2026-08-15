@@ -15,6 +15,9 @@ VPN_IPSET=ourfw_vpn4; DIRECT_IPSET=ourfw_direct4
 OUT="$OURFW/dnsmasq-ourfw.conf"
 TMP="$STATE/dnsmasq-ourfw.$$"
 : > "$TMP"
+# The target is a tiny persistent placeholder. AdBlock bind-mounts its large
+# generated /tmp config over this file only while enabled, so reboot is safe.
+echo "conf-file=$OURFW/adblock-runtime.conf" >> "$TMP"
 if [ "$DNS_ENABLED" = "1" ]; then
     strip_list "$DNS_SERVERS_FILE" | while read s; do
         case "$s" in *[!0-9a-fA-F:.]*) log "dns: invalid upstream $s";; *) echo "server=$s" >> "$TMP";; esac

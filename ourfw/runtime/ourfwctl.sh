@@ -10,7 +10,7 @@ boot_modules() {
     [ "${OURFW_ENABLED:-1}" = "1" ] || exit 0
     hook_install || log "unable to install Padavan event hooks"
     baseline_if_missing
-    for m in vpn smart-routing dns nfqws watchdog diagnostics; do
+    for m in zram vpn smart-routing adblock dns nfqws watchdog diagnostics; do
         f="$OURFW/modules/$m/start.sh"
         [ -x "$f" ] && "$f" boot || true
     done
@@ -25,9 +25,13 @@ event_modules() {
         done
         ;;
       wan)
-        for m in vpn smart-routing dns nfqws watchdog; do
+        for m in vpn smart-routing adblock dns nfqws zram watchdog; do
             f="$OURFW/modules/$m/event.sh"; [ -x "$f" ] && "$f" wan "$@" || true
         done
+        ;;
+      internet)
+        f="$OURFW/modules/watchdog/event.sh"
+        [ -x "$f" ] && "$f" internet "$@" || true
         ;;
       *) return 2 ;;
     esac
@@ -36,14 +40,12 @@ event_modules() {
 status() {
     ver="$(cat "$OURFW/VERSION" 2>/dev/null || echo dev)"
     wan="$(wan_if)"
-    vpn=down; iface=wg0
-    [ -f "$OURFW/config/vpn.conf" ] && load_conf "$OURFW/config/vpn.conf" >/dev/null 2>&1 || true
-    iface="${VPN_INTERFACE:-wg0}"
+    vpn=down; iface="$(active_vpn_if)"; vtype="$(active_vpn_type)"
     iface_exists "$iface" && vpn=up
     nfq=down; pidof nfqws >/dev/null 2>&1 && nfq=up
     printf 'OURFW_VERSION=%s\n' "$ver"
     printf 'PENDING_ROLLBACK=%s\n' "$({ [ -f "$STATE/pending" ] || [ -f "$STATE/update-pending" ]; } && echo 1 || echo 0)"
-    printf 'WAN_IF=%s\nVPN_IF=%s\nVPN_STATE=%s\nNFQWS_STATE=%s\n' "$wan" "$iface" "$vpn" "$nfq"
+    printf 'WAN_IF=%s\nVPN_TYPE=%s\nVPN_IF=%s\nVPN_STATE=%s\nNFQWS_STATE=%s\n' "$wan" "$vtype" "$iface" "$vpn" "$nfq"
     printf 'STORAGE_DIR=%s\n' "$OURFW"
 }
 
@@ -51,9 +53,9 @@ status_json() {
     ver="$(json_escape "$(cat "$OURFW/VERSION" 2>/dev/null || echo dev)")"
     wan="$(json_escape "$(wan_if)")"
 
-    VPN_INTERFACE=wg0; VPN_ENABLED=0
+    VPN_INTERFACE=wg0; VPN_ENABLED=0; VPN_TYPE=wireguard; VPN_FAILOVER_ENABLED=0; VPN_FAILOVER_TYPE=openvpn
     load_conf "$OURFW/config/vpn.conf" >/dev/null 2>&1 || true
-    vpn_if="${VPN_INTERFACE:-wg0}"; vpn_enabled="${VPN_ENABLED:-0}"
+    vpn_if="$(active_vpn_if)"; vpn_type="$(active_vpn_type)"; vpn_enabled="${VPN_ENABLED:-0}"
     vpn_state=false; iface_exists "$vpn_if" && vpn_state=true
 
     NFQWS_ENABLED=0
@@ -68,15 +70,38 @@ status_json() {
     load_conf "$OURFW/config/watchdog.conf" >/dev/null 2>&1 || true
     watchdog_enabled="${WATCHDOG_ENABLED:-0}"
 
+    ADBLOCK_ENABLED=0
+    load_conf "$OURFW/config/adblock.conf" >/dev/null 2>&1 || true
+    adblock_enabled="${ADBLOCK_ENABLED:-0}"
+    adblock_domains=0
+    if [ -f "$STATE/adblock.status" ]; then
+        n="$(sed -n 's/^DOMAINS=//p' "$STATE/adblock.status" 2>/dev/null | head -n1)"
+        is_uint "$n" && adblock_domains="$n" || true
+    fi
+
+    ZRAM_MODE=off
+    load_conf "$OURFW/config/zram.conf" >/dev/null 2>&1 || true
+    zram_mode="$(json_escape "${ZRAM_MODE:-off}")"
+    zram_active=false
+    grep -q '^/dev/zram0[[:space:]]' /proc/swaps 2>/dev/null && zram_active=true
+
+    https_cap=false; sftp_cap=false; openvpn_cap=false
+    [ -x /usr/bin/openssl ] && [ -x /usr/bin/https-cert.sh ] && [ -x /usr/sbin/httpd ] && https_cap=true
+    [ -x /usr/libexec/sftp-server ] && sftp_cap=true
+    [ -x /usr/sbin/openvpn ] && openvpn_cap=true
+
     pending=false; { [ -f "$STATE/pending" ] || [ -f "$STATE/update-pending" ]; } && pending=true
     csrf="$(cat /tmp/ourfw-csrf.token 2>/dev/null || true)"
     case "$csrf" in *[!0-9A-Fa-f]*) csrf="";; esac
     [ "${#csrf}" -eq 64 ] 2>/dev/null || csrf=""
-    printf '{"version":"%s","wan_if":"%s","vpn_if":"%s","vpn_enabled":%s,"vpn_up":%s,"nfqws_enabled":%s,"nfqws_up":%s,"routing_mode":"%s","watchdog_enabled":%s,"pending":%s,"csrf":"%s"}\n' \
-      "$ver" "$wan" "$(json_escape "$vpn_if")" \
+    printf '{"version":"%s","wan_if":"%s","vpn_type":"%s","vpn_if":"%s","vpn_enabled":%s,"vpn_up":%s,"vpn_failover_enabled":%s,"vpn_failover_type":"%s","nfqws_enabled":%s,"nfqws_up":%s,"routing_mode":"%s","watchdog_enabled":%s,"adblock_enabled":%s,"adblock_domains":%s,"zram_mode":"%s","zram_active":%s,"https_cap":%s,"sftp_cap":%s,"openvpn_cap":%s,"pending":%s,"csrf":"%s"}\n' \
+      "$ver" "$wan" "$(json_escape "$vpn_type")" "$(json_escape "$vpn_if")" \
       "$([ "$vpn_enabled" = 1 ] && echo true || echo false)" "$vpn_state" \
+      "$([ "${VPN_FAILOVER_ENABLED:-0}" = 1 ] && echo true || echo false)" "$(json_escape "${VPN_FAILOVER_TYPE:-openvpn}")" \
       "$([ "$nfq_enabled" = 1 ] && echo true || echo false)" "$nfq" "$routing_mode" \
-      "$([ "$watchdog_enabled" = 1 ] && echo true || echo false)" "$pending" "$csrf"
+      "$([ "$watchdog_enabled" = 1 ] && echo true || echo false)" \
+      "$([ "$adblock_enabled" = 1 ] && echo true || echo false)" "$adblock_domains" "$zram_mode" "$zram_active" \
+      "$https_cap" "$sftp_cap" "$openvpn_cap" "$pending" "$csrf"
 }
 
 case "${1:-}" in

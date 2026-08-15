@@ -157,6 +157,26 @@ strip_list() {
     sed 's/[[:space:]]*#.*$//; s/^[[:space:]]*//; s/[[:space:]]*$//' "$1" | sed '/^$/d'
 }
 
+active_vpn_type() {
+    t="$(cat "$STATE/vpn-type" 2>/dev/null || true)"
+    if [ -z "$t" ] && [ -f "$OURFW/config/vpn.conf" ]; then
+        VPN_TYPE=wireguard
+        load_conf "$OURFW/config/vpn.conf" >/dev/null 2>&1 || true
+        t="${VPN_TYPE:-wireguard}"
+    fi
+    printf '%s\n' "${t:-wireguard}"
+}
+
+active_vpn_if() {
+    i="$(cat "$STATE/vpn-interface" 2>/dev/null || true)"
+    if [ -z "$i" ] && [ -f "$OURFW/config/vpn.conf" ]; then
+        VPN_INTERFACE=wg0
+        load_conf "$OURFW/config/vpn.conf" >/dev/null 2>&1 || true
+        i="${VPN_INTERFACE:-wg0}"
+    fi
+    printf '%s\n' "${i:-wg0}"
+}
+
 managed_block() {
     # managed_block file tag content-file
     file="$1"; tag="$2"; src="$3"
@@ -193,21 +213,29 @@ remove_managed_block() {
 }
 
 hook_install() {
-    # Ensure Padavan event hooks re-apply mutable rules after its own firewall/WAN rebuilds.
+    # Keep OURFW behind Padavan's native lifecycle rather than replacing rc.
+    # The Internet Detector hook supplies multi-target TCP state transitions.
     p1=/etc/storage/post_iptables_script.sh
     p2=/etc/storage/post_wan_script.sh
+    p3=/etc/storage/inet_state_script.sh
     s1="$STATE/hook-firewall.$$"
     s2="$STATE/hook-wan.$$"
+    s3="$STATE/hook-internet.$$"
     cat > "$s1" <<'EOT'
 [ -x /etc/storage/ourfw/runtime/ourfwctl.sh ] && /etc/storage/ourfw/runtime/ourfwctl.sh event firewall >/dev/null 2>&1 &
 EOT
     cat > "$s2" <<'EOT'
 [ -x /etc/storage/ourfw/runtime/ourfwctl.sh ] && /etc/storage/ourfw/runtime/ourfwctl.sh event wan "$@" >/dev/null 2>&1 &
 EOT
+    cat > "$s3" <<'EOT'
+_ourfw_inet="$(nvram get link_internet 2>/dev/null || true)"
+[ -x /etc/storage/ourfw/runtime/ourfwctl.sh ] && /etc/storage/ourfw/runtime/ourfwctl.sh event internet "$_ourfw_inet" "$@" >/dev/null 2>&1 &
+EOT
     managed_block "$p1" HOOK_FIREWALL "$s1"
     managed_block "$p2" HOOK_WAN "$s2"
-    chmod 755 "$p1" "$p2" 2>/dev/null
-    rm -f "$s1" "$s2"
+    managed_block "$p3" HOOK_INTERNET "$s3"
+    chmod 755 "$p1" "$p2" "$p3" 2>/dev/null
+    rm -f "$s1" "$s2" "$s3"
 }
 
 json_escape() {

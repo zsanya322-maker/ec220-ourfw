@@ -1,51 +1,58 @@
-# EC220-OURFW v0.5.0 one-shot
+# EC220-OURFW v0.6.0
 
-Кастомный лёгкий Padavan для TP-Link EC220-G5 v2 на проверенной базе `0e6caa2749a8814345c8a0d496a2fde2e6746a7d`.
+Лёгкий модульный Padavan для TP-Link EC220-G5 v2 на проверенной базе `0e6caa2749a8814345c8a0d496a2fde2e6746a7d`.
 
-## Слои
+## Три слоя
 
 ### CORE — минимально изменяемый
-Padavan kernel/MT7620, flash/MTD, Ethernet/Wi-Fi, базовая сеть, Dropbear SSH, штатный httpd, firmware updater, immutable OURFW loader и маленький authenticated API bridge.
+Padavan kernel/MT7620, flash/MTD, Ethernet/Wi-Fi, WAN/LAN, IPv6, firewall/dnsmasq, Dropbear, штатный httpd/firmware updater, HTTPS capability и минимальный OURFW loader/API bridge.
 
 ### BUILTINS — тяжёлые бинарники/модули
-WireGuard + `wg`, AmneziaWG + `awg`, `nfqws`/Zapret, NFQUEUE, ipset, SFE, IPv6 netfilter, BusyBox `sha256sum/base64/mount`.
+WireGuard/AmneziaWG, nfqws/NFQUEUE, ipset/SFE, OpenSSL, OpenVPN, SFTP server, ZRAM и curl. Они меняются полной firmware-сборкой.
 
-### OURFW — persistent mutable `/etc/storage/ourfw`
-Smart Routing, VPN orchestration, nfqws policy, DNS, Watchdog, diagnostics, WebUI, component updater, backup, 90-second rollback. Этот слой можно менять через SSH; модули и WebUI также обновляются из OURFW WebUI.
+### OURFW — mutable `/etc/storage/ourfw`
+Smart Routing, WG/AWG/OpenVPN orchestration, runtime VPN failover, AdBlock Lite, DNS policy, nfqws profiles, ZRAM policy, InternetDetect-aware Watchdog, diagnostics, WebUI, Backup/Restore, component updater и 90-секундный rollback.
 
-## OURFW WebUI
+## WebUI
 
-После установки: `/ourfw/index.asp` в той же авторизованной WebUI роутера.
+`/ourfw/index.asp` внутри штатной авторизации Padavan.
 
-Есть вкладки:
+Вкладки:
 - Состояние;
 - Маршрутизация;
-- VPN;
-- DPI / nfqws;
+- VPN (WG/AWG/OpenVPN + fallback);
+- DPI/nfqws;
 - DNS;
-- Watchdog;
-- Backup / Update;
+- AdBlock;
+- Watchdog + Padavan Internet Detect;
+- Сервисы (HTTPS/SFTP/OpenVPN/ZRAM);
+- Backup/Update;
 - Диагностика.
 
-Любая опасная настройка применяется как candidate. Если доступ пропал и изменение не подтверждено — последняя рабочая конфигурация восстанавливается примерно через 90 секунд.
+Опасные изменения идут как candidate: применить -> примерно 90 секунд -> Confirm или автоматический rollback.
 
-## Flash layout
+## AdBlock Lite
 
-Разметка EC220 не меняется. Firmware partition: `0x780000`; Storage: `0x20000` (128 KiB). Mutable defaults v0.5 занимают около 28 KiB в детерминированном tar+bzip2, то есть ~21% Storage до пользовательских настроек.
+DNS-level blocking через dnsmasq без тяжёлого постоянно работающего AdGuard Home. HTTPS subscriptions + allow/deny. Большая сгенерированная база живёт в `/tmp`; в flash хранится только конфигурация/маленькие списки.
 
-## Сборка
+## VPN
 
-CI всегда использует exact Padavan commit и pinned toolchain SHA256. После MIPS build выполняются:
-1. проверка реального ROMFS;
-2. size check против Firmware partition с 64 KiB safety margin;
-3. построение `tp_recovery.bin = 128 KiB zeros + web.bin`;
-4. byte-check recovery invariant;
-5. разбор и проверка уже финального `.bin` встроенным SquashFS verifier.
+Один policy engine для WireGuard, AmneziaWG и OpenVPN. Smart Routing следует за активным интерфейсом (`wg0`/`tun0`). OpenVPN profile ограничен безопасным single-file режимом: OURFW не разрешает произвольные shell hooks/plugins/management и игнорирует pushed routes/redirect-gateway.
 
-До зелёных `ROMFS_VERIFY=OK` и `IMAGE_VERIFY=OK` образ для железа не принимается.
+Failover — runtime override primary/fallback. Он не переписывает основной persistent VPN config. Автоматическое переключение выполняет Watchdog, поэтому для автоматического failover Watchdog должен быть включён.
 
-## Первый install и дальнейшие update
+## ZRAM
 
-Первая установка планируется через EC220 TFTP recovery по LAN. После успешного первого запуска полноценные firmware updates можно делать через Padavan WebUI, а большую часть OURFW логики/настроек — без перепрошивки через OURFW WebUI/SSH.
+Off / Auto(25%) / 25% / 50%; алгоритм Auto/LZ4/LZO. Политика mutable, kernel support — BUILTIN.
 
-См. `CHANGELOG-v0.5.0-one-shot.md` и `FIRST-CI.md`.
+## Flash
+
+Разметка не меняется. Firmware `0x780000`; Storage `0x20000` (128 KiB). Перед каждой реальной сборкой CI проверяет размер и финальный SquashFS.
+
+## Сборка/безопасность
+
+CI использует exact Padavan commit и pinned toolchain SHA256, проверяет реальный ROMFS и затем снова вскрывает конечный `.bin`. Образ не считается кандидатом для железа без `ROMFS_VERIFY=OK` и `IMAGE_VERIFY=OK`.
+
+Первая установка — TFTP recovery по LAN; последующие полные `.bin` — через Padavan WebUI. Большинство OURFW-патчей/дизайна/правил обновляются без полной перепрошивки.
+
+См. `CHANGELOG-v0.6.0.md` и `BUILD-READY-v0.6.0.md`.

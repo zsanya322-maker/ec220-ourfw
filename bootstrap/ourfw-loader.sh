@@ -53,6 +53,7 @@ seed_defaults() {
         bzip2 -dc "$DEFAULTS" | tar -xf - -C "$BASE" || return 1
     fi
     find "$BASE" -type f -name '*.sh' -exec chmod 0755 {} \; 2>/dev/null
+    for sf in "$BASE/config/vpn.conf" "$BASE/profiles/vpn.conf" "$BASE/profiles/openvpn.ovpn" "$BASE/profiles/openvpn.auth"; do [ -f "$sf" ] && chmod 0600 "$sf" 2>/dev/null || true; done
     ensure_dns_safe || true
     log "mutable OURFW seeded from firmware defaults"
 }

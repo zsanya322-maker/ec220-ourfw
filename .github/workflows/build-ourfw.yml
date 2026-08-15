@@ -36,6 +36,8 @@ jobs:
           echo "PADAVAN_TOOLCHAIN_URL=$PADAVAN_TOOLCHAIN_URL" >> "$GITHUB_ENV"
           echo "PADAVAN_TOOLCHAIN_SHA256=$PADAVAN_TOOLCHAIN_SHA256" >> "$GITHUB_ENV"
           echo "PADAVAN_TOOLCHAIN_SIZE=$PADAVAN_TOOLCHAIN_SIZE" >> "$GITHUB_ENV"
+          OURFW_VERSION=$(cat ourfw/VERSION)
+          echo "OURFW_VERSION=$OURFW_VERSION" >> "$GITHUB_ENV"
 
       - name: Checkout exact Padavan source
         run: |
@@ -77,14 +79,14 @@ jobs:
 
       - name: Verify final firmware image
         run: |
-          fw=$(find dist -maxdepth 1 -type f -name 'TL_EC220_G5-V2_OURFW-v0.5.0-*.bin' -print -quit)
+          fw=$(find dist -maxdepth 1 -type f -name "TL_EC220_G5-V2_OURFW-${OURFW_VERSION}-*.bin" -print -quit)
           test -n "$fw"
           python3 ./ci/verify-built-image.py "$fw" IMAGE-VERIFY.txt
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-          name: EC220-G5-v2-OURFW-v0.5.0
+          name: EC220-G5-v2-OURFW-${{ env.OURFW_VERSION }}
           retention-days: 14
           if-no-files-found: error
           path: |

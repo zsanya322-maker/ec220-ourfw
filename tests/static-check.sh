@@ -8,10 +8,11 @@ done
 find "$ROOT/ci" -type f -name '*.sh' | while IFS= read -r f; do
   bash -n "$f" || exit 20
 done
-python3 -m py_compile "$ROOT/tools/apply-to-padavan.py" "$ROOT/tools/verify-padavan-tree.py" "$ROOT/tools/inspect-images.py" "$ROOT/ci/verify-built-image.py" "$ROOT/tests/integration-mock.py" "$ROOT/tests/reference-recovery.py" "$ROOT/tests/audit-regressions.py" "$ROOT/tests/v050-regressions.py"
+python3 -m py_compile "$ROOT/tools/apply-to-padavan.py" "$ROOT/tools/verify-padavan-tree.py" "$ROOT/tools/inspect-images.py" "$ROOT/ci/verify-built-image.py" "$ROOT/tests/integration-mock.py" "$ROOT/tests/reference-recovery.py" "$ROOT/tests/audit-regressions.py" "$ROOT/tests/v050-regressions.py" "$ROOT/tests/v060-regressions.py"
 python3 "$ROOT/tests/integration-mock.py"
 python3 "$ROOT/tests/audit-regressions.py"
 python3 "$ROOT/tests/v050-regressions.py"
+python3 "$ROOT/tests/v060-regressions.py"
 sh "$ROOT/tests/romfs-verifier-mock.sh"
 bash "$ROOT/tests/runtime-mock.sh"
 sh "$ROOT/build/make-defaults.sh" >/dev/null
@@ -51,12 +52,14 @@ grep -q 'PADAVAN_COMMIT="0e6caa2749a8814345c8a0d496a2fde2e6746a7d"' "$ROOT/varia
   echo 'Padavan commit is not pinned' >&2; exit 28;
 }
 
-# No accidental heavy packages in the v0.5 firmware config.
-for k in CONFIG_FIRMWARE_INCLUDE_OPENVPN CONFIG_FIRMWARE_INCLUDE_SSWAN CONFIG_FIRMWARE_INCLUDE_HTTPS CONFIG_FIRMWARE_INCLUDE_SFTP CONFIG_FIRMWARE_INCLUDE_DNSCRYPT CONFIG_FIRMWARE_INCLUDE_STUBBY CONFIG_FIRMWARE_INCLUDE_DOH CONFIG_FIRMWARE_INCLUDE_ZRAM CONFIG_FIRMWARE_INCLUDE_LUA; do
-  if grep -q "^${k}=y$" "$ROOT/build.config"; then echo "heavy feature unexpectedly enabled: $k" >&2; exit 29; fi
+# v0.6 deliberately shares one OpenSSL base between HTTPS, SFTP and OpenVPN,
+# adds conservative ZRAM and curl for AdBlock list updates. Other large services
+# remain excluded until hardware measurements justify them.
+for k in CONFIG_FIRMWARE_INCLUDE_WIREGUARD CONFIG_FIRMWARE_INCLUDE_AMNEZIAWG CONFIG_FIRMWARE_INCLUDE_NFQWS CONFIG_FIRMWARE_INCLUDE_IPSET CONFIG_FIRMWARE_INCLUDE_DROPBEAR CONFIG_FIRMWARE_INCLUDE_HTTPS CONFIG_FIRMWARE_INCLUDE_SFTP CONFIG_FIRMWARE_INCLUDE_OPENVPN CONFIG_FIRMWARE_INCLUDE_OPENSSL_EC CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE CONFIG_FIRMWARE_INCLUDE_ZRAM CONFIG_FIRMWARE_INCLUDE_CURL; do
+  grep -q "^${k}=y$" "$ROOT/build.config" || { echo "required v0.6 feature missing: $k" >&2; exit 29; }
 done
-for k in CONFIG_FIRMWARE_INCLUDE_WIREGUARD CONFIG_FIRMWARE_INCLUDE_AMNEZIAWG CONFIG_FIRMWARE_INCLUDE_NFQWS CONFIG_FIRMWARE_INCLUDE_IPSET CONFIG_FIRMWARE_INCLUDE_DROPBEAR; do
-  grep -q "^${k}=y$" "$ROOT/build.config" || { echo "required feature missing: $k" >&2; exit 30; }
+for k in CONFIG_FIRMWARE_INCLUDE_SSWAN CONFIG_FIRMWARE_INCLUDE_DNSCRYPT CONFIG_FIRMWARE_INCLUDE_STUBBY CONFIG_FIRMWARE_INCLUDE_DOH CONFIG_FIRMWARE_INCLUDE_LUA CONFIG_FIRMWARE_INCLUDE_XUPNPD CONFIG_FIRMWARE_INCLUDE_SOCAT CONFIG_FIRMWARE_INCLUDE_PRIVOXY CONFIG_FIRMWARE_INCLUDE_TOR; do
+  if grep -q "^${k}=y$" "$ROOT/build.config"; then echo "excluded feature unexpectedly enabled: $k" >&2; exit 30; fi
 done
 
 
@@ -101,4 +104,9 @@ grep -q '^WATCHDOG_ENABLED=0$' "$ROOT/ourfw/config/watchdog.conf" || { echo 'wat
 grep -q 'Peer DNS is part of the VPN contract' "$ROOT/ourfw/modules/smart-routing/apply.sh" || { echo 'peer DNS VPN mark missing' >&2; exit 45; }
 grep -q 'IPv6 peer DNS .* skipped' "$ROOT/ourfw/modules/dns/apply.sh" || { echo 'IPv6 peer DNS fail-closed guard missing' >&2; exit 46; }
 
-echo 'STATIC CHECKS: OK'
+# v0.6 surfaces must be present before spending CI time on the MIPS build.
+for token in 'OpenVPN профиль' 'AdBlock Lite' 'ZRAM' 'Internet Detect' 'SFTP' 'HTTPS WebUI'; do
+  grep -R -q "$token" "$ROOT/ourfw/www" "$ROOT/ourfw/runtime" || { echo "v0.6 WebUI feature missing: $token" >&2; exit 47; }
+done
+
+echo 'STATIC CHECKS: OK' 

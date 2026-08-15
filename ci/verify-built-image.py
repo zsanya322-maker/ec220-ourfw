@@ -153,9 +153,12 @@ def main():
     errs=[]
     def need(cond,msg):
         if not cond: errs.append(msg)
-    required=['/usr/bin/ourfw-loader.sh','/usr/share/ourfw/defaults.tar.bz2','/www/ourfw/index.asp','/www/ourfw/assets/ourfw.js','/www/ourfw/assets/ourfw.css','/usr/sbin/httpd','/usr/sbin/dropbear','/usr/sbin/wg','/usr/sbin/awg','/usr/bin/nfqws','/usr/bin/zapret.sh','/usr/bin/sha256sum','/bin/base64','/usr/bin/autostart.sh']
+    required=['/usr/bin/ourfw-loader.sh','/usr/share/ourfw/defaults.tar.bz2','/www/ourfw/index.asp','/www/ourfw/assets/ourfw.js','/www/ourfw/assets/ourfw.css','/usr/sbin/httpd','/usr/sbin/dropbear','/usr/sbin/wg','/usr/sbin/awg','/usr/sbin/openvpn','/usr/libexec/sftp-server','/usr/bin/openssl','/usr/bin/https-cert.sh','/usr/bin/nfqws','/usr/bin/zapret.sh','/usr/bin/sha256sum','/bin/base64','/usr/bin/autostart.sh']
     for p in required: need(sq.exists_inside(p),f'missing/broken {p}')
-    for mod in ['wireguard.ko','amneziawg.ko','nfnetlink_queue.ko','xt_NFQUEUE.ko','ip6table_mangle.ko']:
+    need(any(sq.exists_inside(p) for p in ['/usr/bin/curl','/usr/sbin/curl','/bin/curl']), 'missing curl binary')
+    need(any(p.startswith('/lib/libssl.so') for p in sq.paths), 'missing libssl')
+    need(any(p.startswith('/lib/libcrypto.so') for p in sq.paths), 'missing libcrypto')
+    for mod in ['wireguard.ko','amneziawg.ko','nfnetlink_queue.ko','xt_NFQUEUE.ko','ip6table_mangle.ko','zram.ko']:
         need(any(p.endswith('/'+mod) for p in sq.paths),f'missing kernel module {mod}')
     if '/usr/sbin/httpd' in sq.paths:
         httpd=sq.read('/usr/sbin/httpd')
@@ -166,14 +169,14 @@ def main():
         try:
             arc=sq.read('/usr/share/ourfw/defaults.tar.bz2')
             with tarfile.open(fileobj=io.BytesIO(arc),mode='r:bz2') as tf: names=set(tf.getnames())
-            for n in ['./runtime/ourfwctl.sh','./runtime/ourfw-api.sh','./runtime/ourfw-transfer.sh','./runtime/ourfw-backup.sh','./runtime/ourfw-ui.sh','./modules/smart-routing/apply.sh','./modules/vpn/apply.sh','./www/index.asp','./www/assets/ourfw.js','./www/assets/ourfw.css']:
+            for n in ['./runtime/ourfwctl.sh','./runtime/ourfw-api.sh','./runtime/ourfw-transfer.sh','./runtime/ourfw-backup.sh','./runtime/ourfw-ui.sh','./modules/smart-routing/apply.sh','./modules/vpn/apply.sh','./modules/vpn/failover.sh','./modules/adblock/apply.sh','./modules/adblock/update.sh','./modules/zram/apply.sh','./modules/watchdog/event.sh','./www/index.asp','./www/assets/ourfw.js','./www/assets/ourfw.css']:
                 need(n in names,f'defaults missing {n}')
         except Exception as e: errs.append(f'defaults archive unreadable: {e}')
     if '/www/ourfw/index.asp' in sq.paths:
         ui=sq.read('/www/ourfw/index.asp')
         js=sq.read('/www/ourfw/assets/ourfw.js') if '/www/ourfw/assets/ourfw.js' in sq.paths else b''
         surface=ui+b'\n'+js
-        for token in [b'Backup Center',b'vpn-profile',b'component-package',b'diagnostics-export',b'section-commit']:
+        for token in [b'Backup Center',b'vpn-profile',b'openvpn-profile',b'AdBlock Lite',b'ZRAM',b'component-package',b'diagnostics-export',b'section-commit']:
             need(token in surface,f'fallback WebUI surface missing token {token!r}')
 
     lines=[f'IMAGE={image.name}',f'SHA256={hashlib.sha256(data).hexdigest()}',f'IMAGE_BYTES={len(data)}',f'SQUASHFS_OFFSET={sq.base}',f'SQUASHFS_BYTES={sq.bytes_used}',f'PATHS={len(sq.paths)}']

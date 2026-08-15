@@ -45,8 +45,13 @@ required=(
   usr/sbin/dropbear
   usr/sbin/wg
   usr/sbin/awg
+  usr/sbin/openvpn
+  usr/libexec/sftp-server
+  usr/bin/openssl
+  usr/bin/https-cert.sh
   usr/bin/nfqws
   usr/bin/zapret.sh
+  usr/bin/curl
   usr/bin/sha256sum
   bin/base64
   usr/bin/autostart.sh
@@ -56,7 +61,7 @@ for rel in "${required[@]}"; do
 done
 [[ -x "$ROMFS/usr/bin/ourfw-loader.sh" ]] || fail 'OURFW loader is not executable'
 [[ -s "$ROMFS/usr/share/ourfw/defaults.tar.bz2" ]] || fail 'defaults archive is empty'
-[[ -s "$ROMFS/usr/sbin/wg" && -s "$ROMFS/usr/sbin/awg" && -s "$ROMFS/usr/bin/nfqws" ]] || fail 'VPN/nfqws binary empty'
+[[ -s "$ROMFS/usr/sbin/wg" && -s "$ROMFS/usr/sbin/awg" && -s "$ROMFS/usr/sbin/openvpn" && -s "$ROMFS/usr/bin/nfqws" ]] || fail 'VPN/nfqws binary empty'
 
 grep -aq 'ourfw_api.cgi' "$ROMFS/usr/sbin/httpd" || fail 'OURFW API bridge missing from compiled httpd'
 grep -aq 'file-chunk' "$ROMFS/usr/sbin/httpd" || fail 'v0.5 chunk bridge missing from compiled httpd'
@@ -75,6 +80,10 @@ for item in \
   './runtime/ourfw-ui.sh' \
   './modules/smart-routing/apply.sh' \
   './modules/vpn/apply.sh' \
+  './modules/vpn/failover.sh' \
+  './modules/adblock/apply.sh' \
+  './modules/adblock/update.sh' \
+  './modules/zram/apply.sh' \
   './modules/nfqws/apply.sh' \
   './www/index.asp' \
   './www/assets/ourfw.js' \
@@ -83,7 +92,7 @@ for item in \
 done
 
 # Kernel capabilities required by OURFW.
-for mod in wireguard.ko amneziawg.ko nfnetlink_queue.ko xt_NFQUEUE.ko ip6table_mangle.ko; do
+for mod in wireguard.ko amneziawg.ko nfnetlink_queue.ko xt_NFQUEUE.ko ip6table_mangle.ko zram.ko; do
   find "$ROMFS/lib/modules" -type f -name "$mod" -print -quit | grep -q . || fail "kernel module missing: $mod"
 done
 
@@ -93,7 +102,9 @@ report_line "OURFW_DEFAULTS_BYTES=$(stat -c %s "$ROMFS/usr/share/ourfw/defaults.
 report_line "WG_BYTES=$(stat -c %s "$ROMFS/usr/sbin/wg")"
 report_line "AWG_BYTES=$(stat -c %s "$ROMFS/usr/sbin/awg")"
 report_line "NFQWS_BYTES=$(stat -c %s "$ROMFS/usr/bin/nfqws")"
+report_line "OPENVPN_BYTES=$(stat -c %s "$ROMFS/usr/sbin/openvpn")"
+report_line "SFTP_BYTES=$(stat -c %s "$ROMFS/usr/libexec/sftp-server")"
 report_line 'MODULES:'
-for mod in wireguard.ko amneziawg.ko nfnetlink_queue.ko xt_NFQUEUE.ko ip6table_mangle.ko; do
+for mod in wireguard.ko amneziawg.ko nfnetlink_queue.ko xt_NFQUEUE.ko ip6table_mangle.ko zram.ko; do
   find "$ROMFS/lib/modules" -type f -name "$mod" -printf '%P %s bytes\n' | tee -a "$REPORT"
 done

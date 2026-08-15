@@ -10,7 +10,7 @@ pending_validate() {
     [ -n "$TYPE" ] || TYPE=module
     safe_id "$MODULE" && safe_id "$VERSION" && safe_id "$STAMP" && safe_id "$TYPE" || return 1
     case "$TYPE" in
-      module) case "$MODULE" in smart-routing|vpn|dns|nfqws|watchdog|diagnostics) DEST="$OURFW/modules/$MODULE";; *) return 1;; esac ;;
+      module) case "$MODULE" in smart-routing|vpn|dns|nfqws|adblock|zram|watchdog|diagnostics) DEST="$OURFW/modules/$MODULE";; *) return 1;; esac ;;
       webui) [ "$MODULE" = webui ] || return 1; DEST="$OURFW/www" ;;
       *) return 1 ;;
     esac
@@ -64,7 +64,7 @@ install_pkg() {
     MODULE=$(sed -n 's/^module=//p' "$STAGE/manifest.conf" | head -n1); VERSION=$(sed -n 's/^version=//p' "$STAGE/manifest.conf" | head -n1); TYPE=$(sed -n 's/^type=//p' "$STAGE/manifest.conf" | head -n1); [ -n "$TYPE" ] || TYPE=module
     safe_id "$MODULE" && safe_id "$VERSION" && safe_id "$TYPE" || { rm -rf "$STAGE"; return 7; }
     case "$TYPE" in
-      module) case "$MODULE" in smart-routing|vpn|dns|nfqws|watchdog|diagnostics) DEST="$OURFW/modules/$MODULE";; *) echo "module is not update-whitelisted" >&2; return 7;; esac ;;
+      module) case "$MODULE" in smart-routing|vpn|dns|nfqws|adblock|zram|watchdog|diagnostics) DEST="$OURFW/modules/$MODULE";; *) echo "module is not update-whitelisted" >&2; return 7;; esac ;;
       webui) [ "$MODULE" = webui ] || { echo "webui package must use module=webui" >&2; return 7; }; DEST="$OURFW/www" ;;
       *) echo "unsupported component type" >&2; return 7;;
     esac

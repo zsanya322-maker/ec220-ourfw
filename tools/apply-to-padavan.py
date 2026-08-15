@@ -275,7 +275,7 @@ def main():
     ]:
         set_kconfig(busy, k, v)
 
-    print("OURFW v0.5 integration applied successfully")
+    print("OURFW v0.6 integration applied successfully")
 
 
 if __name__ == "__main__":
