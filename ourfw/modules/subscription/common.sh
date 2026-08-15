@@ -74,8 +74,10 @@ subscription_validate_url() {
       https://*) ;;
       *) return 1;;
     esac
+    # Reject shell/control whitespace, quotes and backslashes before the value is
+    # ever written to curl's protected config file.
     case "$u" in
-      *[[:space:]"\\]*) return 1;;
+      *[[:space:]]*|*\"*|*\\*) return 1;;
     esac
     [ "${#u}" -le 4096 ] 2>/dev/null || return 1
     h="$(subscription_source_host "$u")"
