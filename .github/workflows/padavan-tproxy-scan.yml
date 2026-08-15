@@ -1,0 +1,88 @@
+name: Padavan TPROXY Source Scan
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/hy2-size-lab
+    paths:
+      - '.github/workflows/padavan-tproxy-scan.yml'
+
+permissions:
+  contents: read
+
+env:
+  PADAVAN_REPO: https://gitlab.com/hadzhioglu/padavan-ng.git
+  PADAVAN_COMMIT: 0e6caa2749a8814345c8a0d496a2fde2e6746a7d
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout exact Padavan source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout "$PADAVAN_REPO" padavan
+          git -C padavan fetch --depth=1 origin "$PADAVAN_COMMIT"
+          git -C padavan checkout --detach FETCH_HEAD
+          test "$(git -C padavan rev-parse HEAD)" = "$PADAVAN_COMMIT"
+
+      - name: Scan TPROXY source and configs
+        shell: bash
+        run: |
+          set -euo pipefail
+          out=TPROXY-SOURCE-SCAN.txt
+          : > "$out"
+          {
+            echo "TPROXY_SOURCE_SCAN=START"
+            echo "PADAVAN_COMMIT=$(git -C padavan rev-parse HEAD)"
+            echo
+            echo '=== KCONFIG/SOURCE SYMBOLS ==='
+            grep -R -n -E 'NETFILTER_XT_TARGET_TPROXY|NETFILTER_XT_MATCH_SOCKET|xt_TPROXY|xt_socket' \
+              padavan/trunk padavan/toolchain 2>/dev/null | head -n 300 || true
+            echo
+            echo '=== KERNEL CONFIG FILES ==='
+            find padavan -type f \( -name '*kernel*config*' -o -name '*.config' \) -print 2>/dev/null | head -n 200
+            echo
+            echo '=== ENABLED/DISABLED CONFIG SYMBOLS ==='
+            grep -R -n -E '^(CONFIG_NETFILTER_XT_TARGET_TPROXY|CONFIG_NETFILTER_XT_MATCH_SOCKET)=|^# (CONFIG_NETFILTER_XT_TARGET_TPROXY|CONFIG_NETFILTER_XT_MATCH_SOCKET) is not set' \
+              padavan 2>/dev/null | head -n 300 || true
+            echo
+            echo '=== IPTABLES USERSPACE TPROXY ==='
+            grep -R -n -E 'libxt_TPROXY|TPROXY target|xtables.*TPROXY|\.TPROXY' \
+              padavan/trunk/user padavan/trunk/libs 2>/dev/null | head -n 300 || true
+            echo
+            echo '=== OURFW BUILD CONFIG RELATED ==='
+            grep -n -E 'NETFILTER|IP_NF|IP6_NF|MANGLE|NFQUEUE|TPROXY|SOCKET' build.config || true
+          } | tee "$out"
+
+          ksrc=NO
+          grep -R -q 'config NETFILTER_XT_TARGET_TPROXY' padavan/trunk 2>/dev/null && ksrc=YES || true
+          ssrc=NO
+          grep -R -q 'config NETFILTER_XT_MATCH_SOCKET' padavan/trunk 2>/dev/null && ssrc=YES || true
+          enabled_tproxy=NO
+          grep -R -q -E '^CONFIG_NETFILTER_XT_TARGET_TPROXY=(y|m)$' padavan 2>/dev/null && enabled_tproxy=YES || true
+          enabled_socket=NO
+          grep -R -q -E '^CONFIG_NETFILTER_XT_MATCH_SOCKET=(y|m)$' padavan 2>/dev/null && enabled_socket=YES || true
+          user_tproxy=NO
+          grep -R -q -E 'libxt_TPROXY|TPROXY target' padavan/trunk/user padavan/trunk/libs 2>/dev/null && user_tproxy=YES || true
+          {
+            echo
+            echo "KERNEL_SOURCE_TPROXY=$ksrc"
+            echo "KERNEL_SOURCE_SOCKET_MATCH=$ssrc"
+            echo "BASE_CONFIG_TPROXY_ENABLED=$enabled_tproxy"
+            echo "BASE_CONFIG_SOCKET_ENABLED=$enabled_socket"
+            echo "IPTABLES_SOURCE_TPROXY=$user_tproxy"
+            echo 'NOTE=base config evidence is not the same as the final EC220 built .config'
+            echo "TPROXY_SOURCE_SCAN=OK"
+          } | tee -a "$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: padavan-tproxy-source-scan
+          retention-days: 14
+          if-no-files-found: error
+          path: TPROXY-SOURCE-SCAN.txt
