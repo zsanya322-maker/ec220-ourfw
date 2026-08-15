@@ -77,7 +77,7 @@ vless://deadbeef@vl.example:8443?security=reality&x=`touch${IFS}/tmp/OURFW_V070_
 unknown://abc@other.example:9999/?q=;touch${IFS}/tmp/OURFW_V070_PWNED
 EOF
 
-"$MOD/parse.sh" "$FEED"
+/bin/sh "$MOD/parse.sh" "$FEED"
 [ ! -e /tmp/OURFW_V070_PWNED ] || { echo 'v0.7a: hostile feed executed shell content' >&2; exit 1; }
 [ "$(wc -l < /tmp/ourfw/subscription/nodes.meta | tr -d '[:space:]')" = 3 ] || {
     echo 'v0.7a: unexpected node count' >&2; exit 1;
@@ -94,7 +94,7 @@ fi
 # A malformed later refresh must keep the last-good node table intact.
 cp /tmp/ourfw/subscription/nodes.meta "$TMP/meta.before"
 printf '%s\n' '%%% definitely not a feed %%%' > "$TMP/bad.feed"
-if "$MOD/parse.sh" "$TMP/bad.feed" >/dev/null 2>&1; then
+if /bin/sh "$MOD/parse.sh" "$TMP/bad.feed" >/dev/null 2>&1; then
     echo 'v0.7a: malformed feed unexpectedly accepted' >&2
     exit 1
 fi
@@ -104,12 +104,12 @@ cmp -s "$TMP/meta.before" /tmp/ourfw/subscription/nodes.meta || {
 
 # Outer-base64 form must decode and parse too.
 printf '%s\n' 'hy2://token@b64.example:443/?sni=b64.example' | base64 | tr -d '\n' > "$TMP/base64.feed"
-"$MOD/parse.sh" "$TMP/base64.feed"
+/bin/sh "$MOD/parse.sh" "$TMP/base64.feed"
 grep -q '|hysteria2|' /tmp/ourfw/subscription/nodes.meta || { echo 'v0.7a: outer-base64 parse failed' >&2; exit 1; }
 
 # Health/API output is metadata only; no raw URI or provider source is returned.
-HEALTH="$("$MOD/health.sh")"
-NODES="$("$MOD/api.sh" nodes)"
+HEALTH="$(/bin/sh "$MOD/health.sh")"
+NODES="$(/bin/sh "$MOD/api.sh" nodes)"
 printf '%s\n' "$HEALTH" | grep -q '"nodes":1' || { echo 'v0.7a: health node count wrong' >&2; exit 1; }
 if printf '%s\n%s\n' "$HEALTH" "$NODES" | grep -Eq 'hy2://|token@|subscription.secret'; then
     echo 'v0.7a: status/API leaked secret subscription data' >&2
