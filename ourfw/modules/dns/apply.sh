@@ -101,7 +101,7 @@ printf '%s\n' "conf-file=$OUT" > "$INC"
 managed_block "$MAIN" DNS_INCLUDE "$INC" || exit 1
 rm -f "$INC"
 
-if command -v restart_dhcpd >/dev/null 2>&1; then
+if have_exec restart_dhcpd; then
     restart_dhcpd >/tmp/ourfw-dns-restart.log 2>&1 || { log "dns: restart_dhcpd failed"; exit 1; }
 elif [ -x /sbin/restart_dhcpd ]; then
     /sbin/restart_dhcpd >/tmp/ourfw-dns-restart.log 2>&1 || { log "dns: restart_dhcpd failed"; exit 1; }

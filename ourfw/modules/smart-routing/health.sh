@@ -1,3 +1,5 @@
 #!/bin/sh
-for x in iptables ipset ip; do command -v "$x" >/dev/null 2>&1 || exit 1; done
+[ -x /bin/iptables ] || exit 1
+[ -x /sbin/ipset ] || exit 1
+[ -x /bin/ip ] || exit 1
 exit 0

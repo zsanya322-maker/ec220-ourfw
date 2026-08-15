@@ -14,7 +14,7 @@ mkdir -p "$Z"
 # stock zapret_* service toggles via NVRAM; disable enable/autostart-style keys
 # in RAM so rc/firewall rebuilds cannot start a competing instance. Do not commit
 # NVRAM, preserving stock settings for rescue mode.
-if command -v nvram >/dev/null 2>&1; then
+if have_exec nvram; then
     nvram show 2>/dev/null | sed -n 's/^\(zapret_[A-Za-z0-9_]*\)=.*/\1/p' | while read k; do
         case "$k" in *enable*|*enabled*|*autostart*) nvram set "$k=0" >/dev/null 2>&1 || true;; esac
     done
@@ -44,7 +44,7 @@ fi
 # zapret.sh officially accepts an alternate strategy path as restart arg.
 /usr/bin/zapret.sh restart "$NFQWS_STRATEGY" >/tmp/ourfw-nfqws.log 2>&1 || { log "nfqws: restart failed"; exit 1; }
 # The current zapret.sh command set has no 'status'; verify the actual worker.
-if command -v pidof >/dev/null 2>&1; then
+if have_exec pidof; then
     pidof nfqws >/dev/null 2>&1 || { log "nfqws: worker did not start"; exit 1; }
 else
     ps 2>/dev/null | grep '[n]fqws' >/dev/null 2>&1 || { log "nfqws: worker did not start"; exit 1; }

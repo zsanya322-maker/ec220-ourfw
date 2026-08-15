@@ -23,7 +23,7 @@ clean_rules() {
     ipt_del_jump -t filter -D OUTPUT -j OURFW_KILL
     iptables -t mangle -F OURFW_ROUTE >/dev/null 2>&1 || true; iptables -t mangle -X OURFW_ROUTE >/dev/null 2>&1 || true
     iptables -t filter -F OURFW_KILL >/dev/null 2>&1 || true; iptables -t filter -X OURFW_KILL >/dev/null 2>&1 || true
-    if command -v ip6tables >/dev/null 2>&1; then
+    if have_exec ip6tables; then
         ip6_del_jump -t filter -D FORWARD -j OURFW6_FWD
         ip6_del_jump -t filter -D OUTPUT -j OURFW6_OUT
         ip6tables -t filter -F OURFW6_FWD >/dev/null 2>&1 || true; ip6tables -t filter -X OURFW6_FWD >/dev/null 2>&1 || true
@@ -120,21 +120,4 @@ if [ "$IPV6_POLICY" = "block" ] && [ "$VPN_ENABLED" = "1" ]; then
     # Insert before Padavan ESTABLISHED/RELATED accepts so existing direct v6
     # sessions cannot survive enabling the guard.
     ip6tables -t filter -I FORWARD 1 -j OURFW6_FWD >/dev/null 2>&1 || { route_fail "IPv6 FORWARD guard jump"; exit 1; }
-    ip6tables -t filter -I OUTPUT 1 -j OURFW6_OUT >/dev/null 2>&1 || { route_fail "IPv6 OUTPUT guard jump"; exit 1; }
-    for n in ::1/128 fe80::/10 fc00::/7 ff00::/8; do
-        ip6tables -t filter -A OURFW6_FWD -d "$n" -j RETURN >/dev/null 2>&1 || { route_fail "IPv6 forward local exclusion $n"; exit 1; }
-        ip6tables -t filter -A OURFW6_OUT -d "$n" -j RETURN >/dev/null 2>&1 || { route_fail "IPv6 output local exclusion $n"; exit 1; }
-    done
-    # Allow the encrypted IPv6 transport endpoint to remain direct.
-    if [ -s "$STATE/vpn-endpoint6" ]; then
-        while IFS= read -r ep6; do
-            case "$ep6" in ''|*[!0-9A-Fa-f:]*) log "routing: ignored invalid IPv6 endpoint cache";; *) ip6tables -t filter -A OURFW6_OUT -d "$ep6" -j RETURN >/dev/null 2>&1 || { route_fail "IPv6 VPN endpoint bypass"; exit 1; };; esac
-        done < "$STATE/vpn-endpoint6"
-    fi
-    ip6tables -t filter -A OURFW6_FWD -o "$VPN_INTERFACE" -j RETURN >/dev/null 2>&1 || { route_fail "IPv6 VPN forward allow"; exit 1; }
-    ip6tables -t filter -A OURFW6_FWD -i "$LAN_IF" -j REJECT >/dev/null 2>&1 || { route_fail "IPv6 LAN forward reject"; exit 1; }
-    ip6tables -t filter -A OURFW6_OUT -o "$VPN_INTERFACE" -j RETURN >/dev/null 2>&1 || { route_fail "IPv6 VPN output allow"; exit 1; }
-    ip6tables -t filter -A OURFW6_OUT -j REJECT >/dev/null 2>&1 || { route_fail "IPv6 output reject"; exit 1; }
-fi
-log "routing: mode=$ROUTING_MODE vpn_enabled=$VPN_ENABLED vpn_if=$VPN_INTERFACE ipv6=$IPV6_POLICY"
-exit 0
+    ip6tables -t filter -I OUTPUT 1 -j OURFW6_OUT >/dev/null 2>&1 ||ìÉ½ÕÑ•}™…¥°€‰%AØØ=UQAUPÕ…É©ÕµÀˆì•á¥Ð€Äìô(€€€™½È¸¥¸€èèÄ¼ÄÈà™”àÀèè¼ÄÀ™ŒÀÀèè¼Ü™˜ÀÀèè¼àì‘¼(€€€€€€€¥ÀÙÑ…‰±•Ì€µÐ™¥±Ñ•È€µ=UI\Ù}]€µ€ˆ‘¸ˆ€µ¨IQUI8€ø½‘•Ø½¹Õ±°€Èø˜Äñò²&÷WFUöf–Â$•cbf÷'v&BÆö6ÂW†6ÇW6–öâFâ#²W†—B²Ð¢—gF&ÆW2×Bf–ÇFW"ÔõU$eseôõUBÖB"Fâ"Ö¢$UEU$ââöFWböçVÆÂ#âcÇÂ²&÷WFUöf–Â$•cb÷WGWBÆö6ÂW†6ÇW6–öâFâ#²W†—B²Ð¢FöæP¢2ÆÆ÷rF†RVæ7'—FVB•cbG&ç7÷'BVæGö–çBFò&VÖ–âF—&V7Bà¢–b²×2"E5DDR÷gâÖVæGö–çCb"Ó²F†Và¢v†–ÆR”e3Ò&VB×"Wc²Fð¢66R"FWb"–ârwÂ¥²Ó”ÔfÖc¥Ò¢’Æör'&÷WF–æs¢–væ÷&VB–çfÆ–B•cbVæGö–çB66†R#³²¢’—gF&ÆW2×Bf–ÇFW"ÔõU$eseôõUBÖB"FWb"Ö¢$UEU$ââöFWböçVÆÂ#âcÇÂ²&÷WFUöf–Â$•cbeâVæGö–çB'—72#²W†—B²Ó³²W60¢FöæRÂ"E5DDR÷gâÖVæGö–çCb ¢f¢—gF&ÆW2×Bf–ÇFW"ÔõU$eseôetBÖò"Eeåô”åDU$d4R"Ö¢$UEU$ââöFWböçVÆÂ#âcÇÈÈ›Ý]WÙ˜Z[’Tˆ”ˆ›ÜØ\™[ÝÈŽÈ^]NÈBˆ\X›\È]š[\ˆPHÕT‘•Í—Ñ•ÑZH‰S—ÒQˆˆZˆ‘R‘PÕ‹Ù]‹Û[‰ŒHÈ›Ý]WÙ˜Z[’TˆSˆ›ÜØ\™™Z™XÝŽÈ^]NÈBˆ\X›\È]š[\ˆPHÕT‘•Í—ÓÕU[È‰”—ÒS•T‘PÑHˆZˆ‘UT“ˆ‹Ù]‹Û[‰ŒHÈ›Ý]WÙ˜Z[’Tˆ”ˆÝ]][ÝÈŽÈ^]NÈBˆ\X›\È]š[\ˆPHÕT‘•Í—ÓÕUZˆ‘R‘PÕ‹Ù]‹Û[‰ŒHÈ›Ý]WÙ˜Z[’TˆÝ]]™Z™XÝŽÈ^]NÈB™šB›ÙÈœ›Ý][™Îˆ[ÙOI“ÕUS‘×ÓSÑHœ—Ù[˜X›YI”—ÑSP“Qœ—ÚYI”—ÒS•T‘PÑH\IT—ÔÓPÖH‚™^]

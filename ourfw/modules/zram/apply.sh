@@ -5,7 +5,7 @@ load_conf "$OURFW/config/zram.conf" || exit 1
 case "$ZRAM_MODE" in off|auto|25|50) ;; *) log "zram: invalid mode"; exit 1;; esac
 case "$ZRAM_ALGO" in auto|lzo|lz4) ;; *) log "zram: invalid algorithm"; exit 1;; esac
 # Prevent Padavan's native zram policy from racing OURFW; keep this runtime-only.
-command -v nvram >/dev/null 2>&1 && nvram set zram_enable=0 >/dev/null 2>&1 || true
+have_exec nvram && nvram set zram_enable=0 >/dev/null 2>&1 || true
 swapoff /dev/zram0 >/dev/null 2>&1 || true
 if [ "$ZRAM_MODE" = off ]; then
     [ -w /sys/block/zram0/reset ] && echo 1 > /sys/block/zram0/reset 2>/dev/null || true

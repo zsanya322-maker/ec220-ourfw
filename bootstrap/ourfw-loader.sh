@@ -13,6 +13,20 @@ STORAGE_SAVE="${OURFW_LOADER_STORAGE_SAVE:-/sbin/mtd_storage.sh}"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) $*" >> "$LOG"; }
 
+# EC220-G5 v2 hardware uses a minimal BusyBox ash without the POSIX `command`
+# builtin. Resolve external executables directly through PATH instead.
+have_exec() {
+    _name="$1"
+    case "$_name" in */*) [ -x "$_name" ]; return $?;; esac
+    _oldifs="$IFS"; IFS=:
+    for _dir in ${PATH:-/bin:/sbin:/usr/bin:/usr/sbin}; do
+        [ -n "$_dir" ] || _dir=.
+        if [ -x "$_dir/$_name" ]; then IFS="$_oldifs"; return 0; fi
+    done
+    IFS="$_oldifs"
+    return 1
+}
+
 persist_storage() {
     [ -x "$STORAGE_SAVE" ] || { log "storage save helper unavailable: $STORAGE_SAVE"; return 1; }
     "$STORAGE_SAVE" save >/dev/null 2>&1 || { log "storage save failed"; return 1; }
@@ -30,7 +44,7 @@ clear_dns_policy() {
     : > "$DNS_SAFE" 2>/dev/null || true
     # If dnsmasq already started earlier in boot, force it to re-read the now
     # empty OURFW include. Failure here must never block base Padavan boot.
-    if command -v restart_dhcpd >/dev/null 2>&1; then
+    if have_exec restart_dhcpd; then
         restart_dhcpd >/dev/null 2>&1 || true
     elif [ -x /sbin/restart_dhcpd ]; then
         /sbin/restart_dhcpd >/dev/null 2>&1 || true
@@ -40,8 +54,10 @@ clear_dns_policy() {
 csrf_new() {
     umask 077
     token=""
-    if command -v sha256sum >/dev/null 2>&1; then
-        token="$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}')"
+    sum=/usr/bin/sha256sum
+    [ -x "$sum" ] || sum=/bin/sha256sum
+    if [ -x "$sum" ]; then
+        token="$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | "$sum" 2>/dev/null | awk '{print $1}')"
     fi
     case "$token" in *[!0-9A-Fa-f]*) token="";; esac
     if [ "${#token}" -eq 64 ] 2>/dev/null; then
@@ -56,14 +72,19 @@ normalize_mutable_perms() {
     for sf in "$BASE/config/vpn.conf" "$BASE/profiles/vpn.conf" "$BASE/profiles/openvpn.ovpn" "$BASE/profiles/openvpn.auth"; do [ -f "$sf" ] && chmod 0600 "$sf" 2>/dev/null || true; done
 }
 
+extract_defaults() {
+    dst="$1"
+    if have_exec bzcat; then
+        bzcat "$DEFAULTS" | tar -xf - -C "$dst"
+    else
+        bzip2 -dc "$DEFAULTS" | tar -xf - -C "$dst"
+    fi
+}
+
 seed_defaults() {
     [ -r "$DEFAULTS" ] || { log "defaults archive missing: $DEFAULTS"; return 1; }
     mkdir -p "$BASE" || return 1
-    if command -v bzcat >/dev/null 2>&1; then
-        bzcat "$DEFAULTS" | tar -xf - -C "$BASE" || return 1
-    else
-        bzip2 -dc "$DEFAULTS" | tar -xf - -C "$BASE" || return 1
-    fi
+    extract_defaults "$BASE" || return 1
     normalize_mutable_perms
     ensure_dns_safe || true
     log "mutable OURFW seeded from firmware defaults"
@@ -73,11 +94,7 @@ defaults_version() {
     probe="/tmp/ourfw-default-probe.$$"
     rm -rf "$probe" 2>/dev/null
     mkdir -p "$probe" || return 1
-    if command -v bzcat >/dev/null 2>&1; then
-        bzcat "$DEFAULTS" | tar -xf - -C "$probe" >/dev/null 2>&1 || { rm -rf "$probe"; return 1; }
-    else
-        bzip2 -dc "$DEFAULTS" | tar -xf - -C "$probe" >/dev/null 2>&1 || { rm -rf "$probe"; return 1; }
-    fi
+    extract_defaults "$probe" >/dev/null 2>&1 || { rm -rf "$probe"; return 1; }
     v="$(cat "$probe/VERSION" 2>/dev/null || true)"
     rm -rf "$probe"
     case "$v" in v[0-9]*.[0-9]*.[0-9]*) printf '%s\n' "$v";; *) return 1;; esac
@@ -116,7 +133,7 @@ refresh_defaults_if_needed() {
     ensure_dns_safe || true
 
     # Validate the candidate while the previous mutable tree still exists in
-    # /tmp.  A syntactically broken firmware payload must never destroy the
+    # /tmp. A syntactically broken firmware payload must never destroy the
     # last bootable OURFW tree just because VERSION changed.
     if ! preflight_mutable; then
         rm -rf "$BASE" 2>/dev/null
@@ -126,7 +143,7 @@ refresh_defaults_if_needed() {
         return 1
     fi
 
-    # Persist the new tree before discarding the previous one.  mtd_storage.sh
+    # Persist the new tree before discarding the previous one. mtd_storage.sh
     # enforces the real whole-/etc/storage MTD size; if it refuses the write,
     # restore the old in-RAM tree and keep base Padavan available.
     if ! persist_storage; then
