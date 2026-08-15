@@ -1,6 +1,6 @@
 #!/bin/sh
 . /etc/storage/ourfw/runtime/ourfw-common.sh || exit 1
-CFG="$OURFW/config/watchdog.conf"; WATCHDOG_ENABLED=1
+CFG="$OURFW/config/watchdog.conf"; WATCHDOG_ENABLED=0
 load_conf "$CFG" || exit 1
 bool01 "$WATCHDOG_ENABLED" || exit 1
 PF="$STATE/watchdog.pid"

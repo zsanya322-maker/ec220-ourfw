@@ -22,7 +22,11 @@ if [ "$DNS_ENABLED" = "1" ]; then
     if [ -s "$STATE/vpn-dns" ]; then
         tr ',' '\n' < "$STATE/vpn-dns" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | while read s; do
             [ -n "$s" ] || continue
-            case "$s" in *[!0-9a-fA-F:.]*) log "dns: invalid vpn dns $s";; *) echo "server=$s" >> "$TMP";; esac
+            case "$s" in
+              *:*) log "dns: IPv6 peer DNS $s skipped until selective IPv6 routing is enabled" ;;
+              *[!0-9.]*) log "dns: invalid vpn dns $s" ;;
+              *) echo "server=$s" >> "$TMP" ;;
+            esac
         done
     fi
     strip_list "$VPN_DOMAINS_FILE" | while read d; do

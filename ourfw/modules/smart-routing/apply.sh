@@ -4,10 +4,10 @@ CFG="$OURFW/config/routing.conf"
 ROUTING_MODE=smart; VPN_INTERFACE=wg0; ROUTE_TABLE=100; FWMARK=0x100; FWMASK=0x100; RULE_PREF=10000; KILLSWITCH=1; IPV6_POLICY=block
 VPN_IPSET=ourfw_vpn4; DIRECT_IPSET=ourfw_direct4
 load_conf "$CFG" || exit 1
-VPN_ENABLED=0
+VPN_ENABLED=0; VPN_USE_PEER_DNS=0
 [ -f "$OURFW/config/vpn.conf" ] && load_conf "$OURFW/config/vpn.conf" || exit 1
 case "$ROUTING_MODE" in off|smart|vpn-all) ;; *) log "routing: invalid mode"; exit 1;; esac
-is_uint "$ROUTE_TABLE" || exit 1; is_uint "$RULE_PREF" || exit 1; bool01 "$KILLSWITCH" || exit 1; bool01 "$VPN_ENABLED" || exit 1
+is_uint "$ROUTE_TABLE" || exit 1; is_uint "$RULE_PREF" || exit 1; bool01 "$KILLSWITCH" || exit 1; bool01 "$VPN_ENABLED" || exit 1; bool01 "$VPN_USE_PEER_DNS" || exit 1
 case "$IPV6_POLICY" in block|native) ;; *) log "routing: invalid IPV6_POLICY"; exit 1;; esac
 need iptables || exit 1; need ipset || exit 1; need ip || exit 1
 
@@ -47,6 +47,24 @@ iptables -t mangle -A OUTPUT -j OURFW_ROUTE
 if [ -s "$STATE/vpn-endpoint4" ]; then
     ep4="$(head -n1 "$STATE/vpn-endpoint4" 2>/dev/null)"
     case "$ep4" in *[!0-9.]*) log "routing: ignored invalid endpoint cache";; *) iptables -t mangle -A OURFW_ROUTE -d "$ep4" -j RETURN;; esac
+fi
+# Peer DNS is part of the VPN contract. Mark its IPv4 DNS traffic before the
+# generic private/direct exclusions so a provider DNS such as 10.0.0.1 cannot
+# silently escape through WAN. The normal kill-switch then protects it if wg0
+# disappears. IPv6 peer DNS is intentionally ignored by dns/apply.sh until the
+# selective IPv6 router is implemented.
+if [ "$VPN_ENABLED" = "1" ] && [ "$VPN_USE_PEER_DNS" = "1" ] && [ -s "$STATE/vpn-dns" ]; then
+    tr ',' '\n' < "$STATE/vpn-dns" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        case "$d" in
+          *:*) ;;
+          *[!0-9.]*) log "routing: ignored invalid peer DNS $d" ;;
+          *)
+            iptables -t mangle -A OURFW_ROUTE -p udp -d "$d" --dport 53 -j MARK --or-mark "$FWMARK" >/dev/null 2>&1 || log "routing: invalid peer DNS $d"
+            iptables -t mangle -A OURFW_ROUTE -p tcp -d "$d" --dport 53 -j MARK --or-mark "$FWMARK" >/dev/null 2>&1 || log "routing: invalid peer DNS $d"
+            ;;
+        esac
+    done
 fi
 for n in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 240.0.0.0/4; do iptables -t mangle -A OURFW_ROUTE -d "$n" -j RETURN; done
 iptables -t mangle -A OURFW_ROUTE -m set --match-set "$DIRECT_IPSET" dst -j RETURN

@@ -64,9 +64,9 @@ status_json() {
     load_conf "$OURFW/config/routing.conf" >/dev/null 2>&1 || true
     routing_mode="$(json_escape "${ROUTING_MODE:-smart}")"
 
-    WATCHDOG_ENABLED=1
+    WATCHDOG_ENABLED=0
     load_conf "$OURFW/config/watchdog.conf" >/dev/null 2>&1 || true
-    watchdog_enabled="${WATCHDOG_ENABLED:-1}"
+    watchdog_enabled="${WATCHDOG_ENABLED:-0}"
 
     pending=false; { [ -f "$STATE/pending" ] || [ -f "$STATE/update-pending" ]; } && pending=true
     csrf="$(cat /tmp/ourfw-csrf.token 2>/dev/null || true)"

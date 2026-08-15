@@ -1,7 +1,7 @@
 #!/bin/sh
 . /etc/storage/ourfw/runtime/ourfw-common.sh || exit 1
 CFG="$OURFW/config/watchdog.conf"
-WATCHDOG_ENABLED=1; WATCHDOG_INTERVAL=30; WATCHDOG_FAILS=3; WATCHDOG_SCOPE=all
+WATCHDOG_ENABLED=0; WATCHDOG_INTERVAL=30; WATCHDOG_FAILS=3; WATCHDOG_SCOPE=all
 PING_TARGET1=1.1.1.1; PING_TARGET2=8.8.8.8; WATCHDOG_REBOOT=0
 WATCHDOG_VPN_TARGET=1.1.1.1; WATCHDOG_VPN_HANDSHAKE_MAX_AGE=180
 load_conf "$CFG" || exit 1
@@ -28,6 +28,18 @@ check_vpn() {
 }
 run_checks() { case "$WATCHDOG_SCOPE" in gateway) check_gateway;; internet) check_internet;; vpn) check_vpn;; all) check_gateway && check_internet && check_vpn;; *) return 1;; esac; }
 repair() {
+    # If connectivity failed while a candidate config/component is awaiting
+    # confirmation, prefer the known-good snapshot immediately instead of
+    # repeatedly repairing the candidate. The independent 90s guard remains a
+    # second line of defence if watchdog itself is disabled or dead.
+    if [ -f "$STATE/pending" ]; then
+        log "watchdog: connectivity failed during pending config; rolling back now"
+        "$OURFW/runtime/ourfw-rollback.sh" now >/dev/null 2>&1 && return 0
+    fi
+    if [ -f "$STATE/update-pending" ]; then
+        log "watchdog: connectivity failed during pending component; rolling back now"
+        "$OURFW/runtime/ourfw-update.sh" rollback >/dev/null 2>&1 && return 0
+    fi
     log "watchdog: threshold reached, repairing mutable services"
     "$OURFW/modules/vpn/apply.sh" >/dev/null 2>&1 || true; "$OURFW/modules/smart-routing/apply.sh" >/dev/null 2>&1 || true
     "$OURFW/modules/dns/apply.sh" >/dev/null 2>&1 || true; "$OURFW/modules/nfqws/apply.sh" >/dev/null 2>&1 || true

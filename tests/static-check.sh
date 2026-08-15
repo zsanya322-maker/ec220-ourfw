@@ -95,4 +95,10 @@ for token in 'Backup Center' 'vpn-profile' 'nfqws-strategy' 'dns-servers' 'watch
 done
 if command -v node >/dev/null 2>&1; then node --check "$ROOT/ourfw/www/assets/ourfw.js"; fi
 
+# v0.5.3 policy fixes: peer DNS must be forced into VPN and first boot watchdog
+# must remain opt-in until the ISP's reachability behaviour is observed.
+grep -q '^WATCHDOG_ENABLED=0$' "$ROOT/ourfw/config/watchdog.conf" || { echo 'watchdog must be disabled by default' >&2; exit 44; }
+grep -q 'Peer DNS is part of the VPN contract' "$ROOT/ourfw/modules/smart-routing/apply.sh" || { echo 'peer DNS VPN mark missing' >&2; exit 45; }
+grep -q 'IPv6 peer DNS .* skipped' "$ROOT/ourfw/modules/dns/apply.sh" || { echo 'IPv6 peer DNS fail-closed guard missing' >&2; exit 46; }
+
 echo 'STATIC CHECKS: OK'

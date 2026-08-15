@@ -110,7 +110,7 @@
     const [cfg,servers]=await Promise.allSequential([()=>getFile('dns-config'),()=>getFile('dns-servers')]);checked('#dns-enabled',kvGet(cfg,'DNS_ENABLED','1')==='1');value('#dns-servers',servers);
   }
   async function loadWatchdog(){
-    const cfg=await getFile('watchdog-config');checked('#wd-enabled',kvGet(cfg,'WATCHDOG_ENABLED','1')==='1');value('#wd-interval',kvGet(cfg,'WATCHDOG_INTERVAL','30'));value('#wd-fails',kvGet(cfg,'WATCHDOG_FAILS','3'));value('#wd-scope',kvGet(cfg,'WATCHDOG_SCOPE','all'));value('#wd-ping1',kvGet(cfg,'PING_TARGET1','1.1.1.1'));value('#wd-ping2',kvGet(cfg,'PING_TARGET2','8.8.8.8'));value('#wd-vpn-target',kvGet(cfg,'WATCHDOG_VPN_TARGET','1.1.1.1'));value('#wd-handshake',kvGet(cfg,'WATCHDOG_VPN_HANDSHAKE_MAX_AGE','180'));checked('#wd-reboot',kvGet(cfg,'WATCHDOG_REBOOT','0')==='1');
+    const cfg=await getFile('watchdog-config');checked('#wd-enabled',kvGet(cfg,'WATCHDOG_ENABLED','0')==='1');value('#wd-interval',kvGet(cfg,'WATCHDOG_INTERVAL','30'));value('#wd-fails',kvGet(cfg,'WATCHDOG_FAILS','3'));value('#wd-scope',kvGet(cfg,'WATCHDOG_SCOPE','all'));value('#wd-ping1',kvGet(cfg,'PING_TARGET1','1.1.1.1'));value('#wd-ping2',kvGet(cfg,'PING_TARGET2','8.8.8.8'));value('#wd-vpn-target',kvGet(cfg,'WATCHDOG_VPN_TARGET','1.1.1.1'));value('#wd-handshake',kvGet(cfg,'WATCHDOG_VPN_HANDSHAKE_MAX_AGE','180'));checked('#wd-reboot',kvGet(cfg,'WATCHDOG_REBOOT','0')==='1');
   }
 
   // Sequential helper avoids races through Padavan's single /tmp API response file.
