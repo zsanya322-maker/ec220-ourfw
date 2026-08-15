@@ -1,0 +1,115 @@
+name: Measure Hysteria2 EC220 Footprint
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v0.7b-tproxy-hy2
+    paths:
+      - '.github/workflows/hysteria-size-research.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    env:
+      HY_VERSION: v2.12.1
+      HY_ASSET: hysteria-linux-mipsle-sf
+      HY_SHA256: 8ca17e22f028fcd25384d4259e25254349131c096a87233078b00640afd33dd4
+      # Proven v0.7 TPROXY image and EC220 safety ceiling from run 31913933297.
+      OURFW_IMAGE_BYTES: '6356996'
+      OURFW_SAFE_MAX_BYTES: '7798784'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install inspection tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends file binutils squashfs-tools xz-utils
+
+      - name: Download pinned official Hysteria2 MIPSLE soft-float binary
+        run: |
+          set -euo pipefail
+          url="https://github.com/apernet/hysteria/releases/download/app/${HY_VERSION}/${HY_ASSET}"
+          curl --fail --location --retry 3 --output "$HY_ASSET" "$url"
+          printf '%s  %s\n' "$HY_SHA256" "$HY_ASSET" | sha256sum -c -
+          chmod 0755 "$HY_ASSET"
+
+      - name: Inspect ELF and Go metadata
+        run: |
+          set -euo pipefail
+          {
+            echo 'HYSTERIA_EC220_RESEARCH=BEGIN'
+            echo "HYSTERIA_VERSION=$HY_VERSION"
+            echo "HYSTERIA_ASSET=$HY_ASSET"
+            echo "HYSTERIA_SHA256=$(sha256sum "$HY_ASSET" | awk '{print $1}')"
+            echo "HYSTERIA_RAW_BYTES=$(stat -c %s "$HY_ASSET")"
+            echo '--- FILE ---'
+            file "$HY_ASSET"
+            echo '--- ELF_HEADER ---'
+            readelf -h "$HY_ASSET"
+            echo '--- PROGRAM_HEADERS ---'
+            readelf -l "$HY_ASSET"
+            echo '--- DYNAMIC_SECTION ---'
+            readelf -d "$HY_ASSET" || true
+            echo '--- GO_BUILD_INFO ---'
+            go version -m "$HY_ASSET" || true
+            echo 'HYSTERIA_EC220_RESEARCH=END'
+          } | tee HYSTERIA-ELF.txt
+
+          # EC220 requires 32-bit little-endian MIPS.  The official -sf asset
+          # must also be self-contained: a PT_INTERP/dynamic loader would make
+          # it unsuitable for direct deployment on Padavan/uClibc.
+          file "$HY_ASSET" | grep -Eqi 'ELF 32-bit.*LSB.*MIPS'
+          if readelf -l "$HY_ASSET" | grep -q 'INTERP'; then
+            echo 'ERROR: official Hysteria binary requires a dynamic interpreter' >&2
+            exit 71
+          fi
+
+      - name: Measure exact Padavan-style SquashFS XZ cost
+        run: |
+          set -euo pipefail
+          rm -rf hy-root
+          mkdir -p hy-root/usr/bin
+          cp "$HY_ASSET" hy-root/usr/bin/hysteria
+
+          # Mirror the EC220 Padavan image settings observed in the proven
+          # build: SquashFS XZ, 128 KiB blocks, all-root, no exports, no xattrs,
+          # no inode compression and no trailing padding.
+          mksquashfs hy-root hysteria-only.sqfs \
+            -comp xz -b 131072 -all-root -no-exports -noappend -nopad -noI -no-xattrs
+
+          raw=$(stat -c %s "$HY_ASSET")
+          sq=$(stat -c %s hysteria-only.sqfs)
+          headroom=$((OURFW_SAFE_MAX_BYTES - OURFW_IMAGE_BYTES))
+          projected=$((OURFW_IMAGE_BYTES + sq))
+          if (( sq <= headroom )); then fit=YES; else fit=NO; fi
+
+          {
+            echo 'HYSTERIA_SIZE_VERIFY=OK'
+            echo "HYSTERIA_VERSION=$HY_VERSION"
+            echo "RAW_BYTES=$raw"
+            echo "SQUASHFS_XZ_BYTES=$sq"
+            echo "CURRENT_OURFW_IMAGE_BYTES=$OURFW_IMAGE_BYTES"
+            echo "EC220_SAFE_MAX_BYTES=$OURFW_SAFE_MAX_BYTES"
+            echo "CURRENT_SAFE_HEADROOM_BYTES=$headroom"
+            echo "PROJECTED_IMAGE_BYTES=$projected"
+            echo "FIT_IN_CURRENT_FIRMWARE=$fit"
+          } | tee HYSTERIA-SIZE.txt
+
+          # This research gate reports fit/no-fit; no firmware image or router
+          # networking is modified here.
+
+      - name: Upload measurement
+        uses: actions/upload-artifact@v4
+        with:
+          name: EC220-v0.7b-Hysteria2-footprint
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            HYSTERIA-ELF.txt
+            HYSTERIA-SIZE.txt
+            hysteria-only.sqfs
