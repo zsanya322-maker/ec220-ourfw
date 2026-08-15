@@ -5,7 +5,36 @@ REPORT=${2:-TPROXY-ROMFS-VERIFY.txt}
 ROMFS="$TREE/trunk/romfs"
 : > "$REPORT"
 log() { printf '%s\n' "$*" | tee -a "$REPORT"; }
-fail() { log 'TPROXY_ROMFS_VERIFY=FAILED'; log "ERROR=$*"; exit 51; }
+
+snapshot() {
+  log '--- TPROXY_DIAGNOSTICS_BEGIN ---'
+  if [[ -d "$ROMFS" ]]; then
+    log 'ROMFS_MATCHES:'
+    find "$ROMFS" -type f \( -iname '*tproxy*' -o -iname '*socket*' -o -iname '*xtable*' -o -iname '*iptables*' \) \
+      -printf '%P %s\n' 2>/dev/null | sort | tee -a "$REPORT" || true
+  else
+    log 'ROMFS_MISSING=1'
+  fi
+
+  log 'BUILD_TREE_MATCHES:'
+  find "$TREE/trunk" -type f \( -name 'xt_TPROXY.ko' -o -name 'xt_socket.ko' -o -name 'libxt_TPROXY.so' -o -name 'libxt_socket.so' \) \
+    -printf '%P %s\n' 2>/dev/null | sort | head -100 | tee -a "$REPORT" || true
+
+  cfg="$TREE/trunk/configs/boards/TPLINK/TL_EC220_G5-V2/kernel-3.4.x.config"
+  if [[ -f "$cfg" ]]; then
+    log 'KCONFIG_TPROXY:'
+    grep -E 'CONFIG_(NETFILTER_TPROXY|NETFILTER_XT_TARGET_TPROXY|NETFILTER_XT_MATCH_SOCKET|IP_MULTIPLE_TABLES)=' "$cfg" \
+      | tee -a "$REPORT" || true
+  fi
+  log '--- TPROXY_DIAGNOSTICS_END ---'
+}
+
+fail() {
+  log 'TPROXY_ROMFS_VERIFY=FAILED'
+  log "ERROR=$*"
+  snapshot
+  exit 51
+}
 
 [[ -d "$ROMFS/lib/modules" ]] || fail 'missing lib/modules'
 
@@ -15,7 +44,7 @@ socket_mod=$(find "$ROMFS/lib/modules" -type f -name 'xt_socket.ko' -print -quit
 [[ -n "$socket_mod" && -s "$socket_mod" ]] || fail 'xt_socket.ko was not built/packed'
 
 userspace=NO
-multi=$(find "$ROMFS" -type f \( -name 'xtables-legacy-multi' -o -name 'iptables-multi' \) -print -quit)
+multi=$(find "$ROMFS" -type f \( -name 'xtables-legacy-multi' -o -name 'iptables-multi' -o -name 'iptables' \) -print -quit)
 if [[ -n "$multi" ]] && grep -aq 'TPROXY target options' "$multi" && grep -aq 'socket match options' "$multi"; then
   userspace=BUILTIN
 else
