@@ -8,11 +8,17 @@ done
 find "$ROOT/ci" -type f -name '*.sh' | while IFS= read -r f; do
   bash -n "$f" || exit 20
 done
-python3 -m py_compile "$ROOT/tools/apply-to-padavan.py" "$ROOT/tools/verify-padavan-tree.py" "$ROOT/tools/inspect-images.py" "$ROOT/ci/verify-built-image.py" "$ROOT/tests/integration-mock.py" "$ROOT/tests/reference-recovery.py" "$ROOT/tests/audit-regressions.py" "$ROOT/tests/v050-regressions.py" "$ROOT/tests/v060-regressions.py"
+find "$ROOT/tests" -type f -name '*.sh' | while IFS= read -r f; do
+  bash -n "$f" || exit 20
+done
+python3 -m py_compile "$ROOT/tools/apply-to-padavan.py" "$ROOT/tools/verify-padavan-tree.py" "$ROOT/tools/inspect-images.py" "$ROOT/ci/verify-built-image.py" "$ROOT/ci/verify-ourfw-payload.py" "$ROOT/tests/integration-mock.py" "$ROOT/tests/reference-recovery.py" "$ROOT/tests/audit-regressions.py" "$ROOT/tests/v050-regressions.py" "$ROOT/tests/v060-regressions.py" "$ROOT/tests/v061-regressions.py"
 python3 "$ROOT/tests/integration-mock.py"
 python3 "$ROOT/tests/audit-regressions.py"
 python3 "$ROOT/tests/v050-regressions.py"
 python3 "$ROOT/tests/v060-regressions.py"
+python3 "$ROOT/tests/v061-regressions.py"
+bash "$ROOT/tests/v061-module-handoff.sh"
+bash "$ROOT/tests/loader-upgrade-mock.sh"
 sh "$ROOT/tests/romfs-verifier-mock.sh"
 bash "$ROOT/tests/runtime-mock.sh"
 sh "$ROOT/build/make-defaults.sh" >/dev/null
@@ -62,7 +68,6 @@ for k in CONFIG_FIRMWARE_INCLUDE_SSWAN CONFIG_FIRMWARE_INCLUDE_DNSCRYPT CONFIG_F
   if grep -q "^${k}=y$" "$ROOT/build.config"; then echo "excluded feature unexpectedly enabled: $k" >&2; exit 30; fi
 done
 
-
 # Generated runtime state must stay in /tmp; 128 KiB persistent Storage is precious.
 grep -q 'GEN="$STATE/generated"' "$ROOT/ourfw/runtime/ourfw-common.sh" || {
   echo 'generated files are not volatile' >&2; exit 31;
@@ -109,4 +114,10 @@ for token in 'OpenVPN профиль' 'AdBlock Lite' 'ZRAM' 'Internet Detect' 'S
   grep -R -q "$token" "$ROOT/ourfw/www" "$ROOT/ourfw/runtime" || { echo "v0.6 WebUI feature missing: $token" >&2; exit 47; }
 done
 
-echo 'STATIC CHECKS: OK' 
+# v0.6.1: WG/AWG mutual exclusion, firmware mutable refresh and real-build
+# duplicate-export reporting are mandatory regression gates.
+grep -q 'module-handoff.sh' "$ROOT/ourfw/modules/vpn/apply.sh" || { echo 'WG/AWG module handoff missing' >&2; exit 48; }
+grep -q 'refresh_defaults_if_needed' "$ROOT/bootstrap/ourfw-loader.sh" || { echo 'firmware mutable refresh missing' >&2; exit 49; }
+[ -f "$ROOT/ci/check-kernel-export-warnings.sh" ] || { echo 'kernel export warning gate missing' >&2; exit 50; }
+
+echo 'STATIC CHECKS: OK'

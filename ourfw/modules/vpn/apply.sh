@@ -36,9 +36,19 @@ stop_openvpn() {
     iface_exists tun0 && ip link del dev tun0 >/dev/null 2>&1 || true
 }
 
+remove_wg_iface() {
+    i="$1"
+    case "$i" in ''|tun0) return 0;; esac
+    iface_exists "$i" && ip link del dev "$i" >/dev/null 2>&1 || true
+}
+
 stop_ourfw_vpn() {
+    old_if="$(cat "$STATE/vpn-interface" 2>/dev/null || true)"
     stop_openvpn
-    iface_exists wg0 && ip link del dev wg0 >/dev/null 2>&1 || true
+    remove_wg_iface "$old_if"
+    [ "$VPN_INTERFACE" = "$old_if" ] || remove_wg_iface "$VPN_INTERFACE"
+    # v0.6.0 used wg0 unconditionally, so clean a stale legacy interface too.
+    [ "$old_if" = wg0 ] || [ "$VPN_INTERFACE" = wg0 ] || remove_wg_iface wg0
     rm -f "$STATE/vpn-endpoint4" "$STATE/vpn-endpoint6" "$STATE/vpn-dns" "$STATE/vpn-type" "$STATE/vpn-interface"
 }
 
@@ -106,7 +116,6 @@ make_openvpn_config() {
           dev|dev-type|route|route-ipv6|redirect-gateway|redirect-private|route-gateway|route-metric|route-delay|route-noexec|route-nopull)
             continue;;
           ca|cert|key|pkcs12|tls-auth|tls-crypt|tls-crypt-v2|crl-verify)
-            # Single-file profiles only: PEM/key material must be inline.
             log "vpn: external OpenVPN file directive rejected: $key (use inline block)"; rm -f "$out"; return 1;;
           auth-user-pass)
             if validate_auth_file; then printf 'auth-user-pass %s\n' "$VPN_OPENVPN_AUTH" >> "$out"; else log "vpn: auth-user-pass requires a two-line OURFW auth file"; rm -f "$out"; return 1; fi
@@ -151,7 +160,7 @@ start_openvpn() {
 
 start_wg_family() {
     type="$1"; profile="$VPN_PROFILE"; [ -f "$profile" ] || { log "vpn: profile not found: $profile"; return 1; }
-    chmod 600 "$profile" 2>/dev/null || true; need ip || return 1; need modprobe || return 1
+    chmod 600 "$profile" 2>/dev/null || true; need ip || return 1
     addr="$(profile_get Interface Address "$profile")"; priv="$(profile_get Interface PrivateKey "$profile")"; dns="$(profile_get Interface DNS "$profile")"
     mtu="$(profile_get Interface MTU "$profile")"; pub="$(profile_get Peer PublicKey "$profile")"; psk="$(profile_get Peer PresharedKey "$profile")"
     endpoint="$(profile_get Peer Endpoint "$profile")"; keep="$(profile_get Peer PersistentKeepalive "$profile")"; allowed="$(profile_get Peer AllowedIPs "$profile")"
@@ -172,8 +181,7 @@ start_wg_family() {
         if [ -n "$i1" ]; then
             [ ${#i1} -le 512 ] || { log "vpn: AWG I1 too long"; rm -f "$TMP"; return 1; }
             case "$i1" in *[!0-9A-Fa-fxXbB\<\>\ ,]*) log "vpn: invalid AWG I1"; rm -f "$TMP"; return 1;; esac
-            printf 'I1 = %s
-' "$i1"
+            printf 'I1 = %s\n' "$i1"
         fi
       fi
       echo '[Peer]'; printf 'PublicKey = %s\n' "$pub"; [ -z "$psk" ] || printf 'PresharedKey = %s\n' "$psk"
@@ -181,7 +189,10 @@ start_wg_family() {
     } > "$TMP" || return 1
     chmod 600 "$TMP" 2>/dev/null || true
     if [ "$type" = wireguard ]; then WG=/usr/sbin/wg; mod=wireguard; linktype=wireguard; else WG=/usr/sbin/awg; mod=amneziawg; linktype=amneziawg; fi
-    [ -x "$WG" ] || { rm -f "$TMP"; return 1; }; modprobe -q "$mod" >/dev/null 2>&1 || { rm -f "$TMP"; return 1; }
+    [ -x "$WG" ] || { rm -f "$TMP"; return 1; }
+    HANDOFF="$OURFW/modules/vpn/module-handoff.sh"
+    [ -x "$HANDOFF" ] || { log "vpn: WG/AWG module handoff helper missing"; rm -f "$TMP"; return 1; }
+    "$HANDOFF" "$mod" || { log "vpn: WG/AWG kernel module handoff failed for $mod"; rm -f "$TMP"; return 1; }
     ip link add dev "$VPN_INTERFACE" type "$linktype" >/tmp/ourfw-vpn-start.log 2>&1 || { rm -f "$TMP"; return 1; }
     ok=1; OLDIFS=$IFS; IFS=','
     for a in $addr; do IFS=$OLDIFS; a="$(printf '%s' "$a" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"; [ -n "$a" ] || continue; case "$a" in *:*) fam=-6;; *) fam=-4;; esac; ip $fam addr add "$a" dev "$VPN_INTERFACE" >/dev/null 2>&1 || ok=0; IFS=','; done
