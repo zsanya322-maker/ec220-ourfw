@@ -9,6 +9,16 @@ bool01 "$NFQWS_LOG" || exit 1
 
 Z=/etc/storage/zapret
 mkdir -p "$Z"
+
+# OURFW is the sole nfqws orchestrator. The pinned Padavan firmware can expose
+# stock zapret_* service toggles via NVRAM; disable enable/autostart-style keys
+# in RAM so rc/firewall rebuilds cannot start a competing instance. Do not commit
+# NVRAM, preserving stock settings for rescue mode.
+if command -v nvram >/dev/null 2>&1; then
+    nvram show 2>/dev/null | sed -n 's/^\(zapret_[A-Za-z0-9_]*\)=.*/\1/p' | while read k; do
+        case "$k" in *enable*|*enabled*|*autostart*) nvram set "$k=0" >/dev/null 2>&1 || true;; esac
+    done
+fi
 # OURFW owns these lists; zapret auto-host learning remains persistent because
 # auto.list points back into OURFW storage.
 for pair in "user.list:nfqws-user.list" "exclude.list:nfqws-exclude.list" "auto.list:nfqws-auto.list"; do

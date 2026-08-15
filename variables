@@ -1,4 +1,11 @@
 PADAVAN_REPO="https://gitlab.com/hadzhioglu/padavan-ng.git"
 PADAVAN_BRANCH="master"
 PADAVAN_COMMIT="0e6caa2749a8814345c8a0d496a2fde2e6746a7d"
-PADAVAN_TOOLCHAIN_URL="https://gitlab.com/api/v4/projects/hadzhioglu%2Fpadavan-ng/packages/generic/toolchain/latest/toolchain.tzst"
+# GitLab generic package ID 45307781, package-file ID 226755715.
+# The registry version is literally named "latest"; content is cryptographically
+# pinned below, so an upstream replacement is rejected before extraction.
+PADAVAN_TOOLCHAIN_URL="https://gitlab.com/api/v4/projects/40277088/packages/generic/toolchain/latest/toolchain.tzst"
+PADAVAN_TOOLCHAIN_SHA256="cd6e8635765e706f8cfb6212a7d286be245f5e943c356006bff998845eeee3e7"
+PADAVAN_TOOLCHAIN_SIZE="33636652"
+PADAVAN_TOOLCHAIN_PACKAGE_ID="45307781"
+PADAVAN_TOOLCHAIN_FILE_ID="226755715"

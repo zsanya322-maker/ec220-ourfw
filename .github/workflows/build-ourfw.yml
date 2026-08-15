@@ -34,6 +34,8 @@ jobs:
           echo "PADAVAN_BRANCH=$PADAVAN_BRANCH" >> "$GITHUB_ENV"
           echo "PADAVAN_COMMIT=$PADAVAN_COMMIT" >> "$GITHUB_ENV"
           echo "PADAVAN_TOOLCHAIN_URL=$PADAVAN_TOOLCHAIN_URL" >> "$GITHUB_ENV"
+          echo "PADAVAN_TOOLCHAIN_SHA256=$PADAVAN_TOOLCHAIN_SHA256" >> "$GITHUB_ENV"
+          echo "PADAVAN_TOOLCHAIN_SIZE=$PADAVAN_TOOLCHAIN_SIZE" >> "$GITHUB_ENV"
 
       - name: Checkout exact Padavan source
         run: |
@@ -47,6 +49,8 @@ jobs:
       - name: Download Padavan toolchain
         run: |
           wget -qO toolchain.tzst "$PADAVAN_TOOLCHAIN_URL"
+          test "$(stat -c %s toolchain.tzst)" = "$PADAVAN_TOOLCHAIN_SIZE"
+          printf '%s  %s\n' "$PADAVAN_TOOLCHAIN_SHA256" toolchain.tzst | sha256sum -c -
           sha256sum toolchain.tzst | tee TOOLCHAIN.sha256
           tar -C padavan-ng --zstd -xf toolchain.tzst
 
@@ -70,7 +74,7 @@ jobs:
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-          name: EC220-G5-v2-OURFW-v0.3
+          name: EC220-G5-v2-OURFW-v0.4
           retention-days: 14
           if-no-files-found: error
           path: |

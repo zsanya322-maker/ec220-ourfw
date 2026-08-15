@@ -51,11 +51,13 @@ struct mime_handler mime_handlers[] = {
         mk = (trunk / "user/Makefile").read_text()
         auto = (trunk / "user/scripts/autostart.sh").read_text()
         web = (trunk / "user/httpd/web_ex.c").read_text()
-        assert mk.count("OURFW_USERDIR_V03") == 1
-        assert auto.count("OURFW_LOADER_V03") == 1
+        assert mk.count("OURFW_USERDIR_V04") == 1
+        assert auto.count("OURFW_LOADER_V04") == 1
         assert web.count('"ourfw_api.cgi*"') == 1
         assert "isalnum(" not in web and "access(" not in web and "unlink(" not in web
         assert 'remove("/tmp/ourfw-api.json")' in web
+        assert 'ourfw_api_csrf_ok' in web
+        assert 'get_cgi("csrf")' in web
 
         # At least compile the generated bridge as ordinary C in the mock. The
         # real MIPS build remains the authoritative ABI check.

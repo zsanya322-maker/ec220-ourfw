@@ -69,11 +69,14 @@ status_json() {
     watchdog_enabled="${WATCHDOG_ENABLED:-1}"
 
     pending=false; { [ -f "$STATE/pending" ] || [ -f "$STATE/update-pending" ]; } && pending=true
-    printf '{"version":"%s","wan_if":"%s","vpn_if":"%s","vpn_enabled":%s,"vpn_up":%s,"nfqws_enabled":%s,"nfqws_up":%s,"routing_mode":"%s","watchdog_enabled":%s,"pending":%s}\n' \
+    csrf="$(cat /tmp/ourfw-csrf.token 2>/dev/null || true)"
+    case "$csrf" in *[!0-9A-Fa-f]*) csrf="";; esac
+    [ "${#csrf}" -eq 64 ] 2>/dev/null || csrf=""
+    printf '{"version":"%s","wan_if":"%s","vpn_if":"%s","vpn_enabled":%s,"vpn_up":%s,"nfqws_enabled":%s,"nfqws_up":%s,"routing_mode":"%s","watchdog_enabled":%s,"pending":%s,"csrf":"%s"}\n' \
       "$ver" "$wan" "$(json_escape "$vpn_if")" \
       "$([ "$vpn_enabled" = 1 ] && echo true || echo false)" "$vpn_state" \
       "$([ "$nfq_enabled" = 1 ] && echo true || echo false)" "$nfq" "$routing_mode" \
-      "$([ "$watchdog_enabled" = 1 ] && echo true || echo false)" "$pending"
+      "$([ "$watchdog_enabled" = 1 ] && echo true || echo false)" "$pending" "$csrf"
 }
 
 case "${1:-}" in

@@ -8,8 +8,9 @@ done
 find "$ROOT/ci" -type f -name '*.sh' | while IFS= read -r f; do
   bash -n "$f" || exit 20
 done
-python3 -m py_compile "$ROOT/tools/apply-to-padavan.py" "$ROOT/tools/verify-padavan-tree.py" "$ROOT/tools/inspect-images.py" "$ROOT/tests/integration-mock.py" "$ROOT/tests/reference-recovery.py"
+python3 -m py_compile "$ROOT/tools/apply-to-padavan.py" "$ROOT/tools/verify-padavan-tree.py" "$ROOT/tools/inspect-images.py" "$ROOT/tests/integration-mock.py" "$ROOT/tests/reference-recovery.py" "$ROOT/tests/audit-regressions.py"
 python3 "$ROOT/tests/integration-mock.py"
+python3 "$ROOT/tests/audit-regressions.py"
 "$ROOT/build/make-defaults.sh" >/dev/null
 "$ROOT/tools/storage-budget.sh"
 
@@ -47,7 +48,7 @@ grep -q 'PADAVAN_COMMIT="0e6caa2749a8814345c8a0d496a2fde2e6746a7d"' "$ROOT/varia
   echo 'Padavan commit is not pinned' >&2; exit 28;
 }
 
-# No accidental heavy packages in the v0.3 firmware config.
+# No accidental heavy packages in the v0.4 firmware config.
 for k in CONFIG_FIRMWARE_INCLUDE_OPENVPN CONFIG_FIRMWARE_INCLUDE_SSWAN CONFIG_FIRMWARE_INCLUDE_HTTPS CONFIG_FIRMWARE_INCLUDE_SFTP CONFIG_FIRMWARE_INCLUDE_DNSCRYPT CONFIG_FIRMWARE_INCLUDE_STUBBY CONFIG_FIRMWARE_INCLUDE_DOH CONFIG_FIRMWARE_INCLUDE_ZRAM CONFIG_FIRMWARE_INCLUDE_LUA; do
   if grep -q "^${k}=y$" "$ROOT/build.config"; then echo "heavy feature unexpectedly enabled: $k" >&2; exit 29; fi
 done
@@ -64,8 +65,8 @@ grep -q 'GEN="$STATE/generated"' "$ROOT/ourfw/runtime/ourfw-common.sh" || {
 grep -q '^IPV6_POLICY=block$' "$ROOT/ourfw/config/routing.conf" || {
   echo 'IPv6 no-leak policy missing' >&2; exit 32;
 }
-grep -q 'OURFW6_KILL' "$ROOT/ourfw/modules/smart-routing/apply.sh" || {
-  echo 'IPv6 leak guard chain missing' >&2; exit 33;
+grep -q 'OURFW6_FWD' "$ROOT/ourfw/modules/smart-routing/apply.sh" && grep -q 'OURFW6_OUT' "$ROOT/ourfw/modules/smart-routing/apply.sh" || {
+  echo 'IPv6 leak guard chains missing' >&2; exit 33;
 }
 
 echo 'STATIC CHECKS: OK'

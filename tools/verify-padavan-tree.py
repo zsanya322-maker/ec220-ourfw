@@ -39,13 +39,16 @@ def main():
     need('+= ourfw' in umk.read_text(errors='replace'), 'OURFW user Makefile entry missing', errors)
     auto=[]
     for p in (t/'user').rglob('autostart.sh'):
-        if p.is_file() and 'OURFW_LOADER_V03' in p.read_text(errors='replace'): auto.append(p)
+        if p.is_file() and 'OURFW_LOADER_V04' in p.read_text(errors='replace'): auto.append(p)
     need(len(auto)==1, f'OURFW autostart hook count={len(auto)}', errors)
     api_hits=[]
     for p in httpd.glob('*.c'):
         txt=p.read_text(errors='replace')
         if 'ourfw_api.cgi' in txt and 'do_ourfw_api' in txt: api_hits.append(p)
     need(len(api_hits)==1, f'OURFW API bridge count={len(api_hits)}', errors)
+    if api_hits:
+        at=api_hits[0].read_text(errors='replace')
+        need('ourfw_api_csrf_ok' in at and 'get_cgi("csrf")' in at, 'OURFW CSRF bridge missing', errors)
     need((ourfw/'files/ourfw-loader.sh').is_file(), 'immutable loader payload missing', errors)
     need((ourfw/'files/defaults.tar.bz2').is_file(), 'OURFW defaults archive missing', errors)
     need((ourfw/'files/www/index.asp').is_file(), 'immutable WebUI fallback missing', errors)

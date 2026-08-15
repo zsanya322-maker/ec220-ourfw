@@ -124,6 +124,33 @@ kill_pidfile() {
     rm -f "$pf"
 }
 
+
+TXN_LOCK="$STATE/txn.lock"
+txn_lock_acquire() {
+    tries=0
+    while [ "$tries" -lt 2 ]; do
+        if mkdir "$TXN_LOCK" 2>/dev/null; then
+            printf '%s\n' "$$" > "$TXN_LOCK/pid"
+            return 0
+        fi
+        owner="$(cat "$TXN_LOCK/pid" 2>/dev/null || true)"
+        if is_uint "$owner" && kill -0 "$owner" 2>/dev/null; then
+            return 1
+        fi
+        log "transaction: removing stale lock owner=${owner:-unknown}"
+        rm -rf "$TXN_LOCK" 2>/dev/null || return 1
+        tries=$((tries+1))
+    done
+    return 1
+}
+
+txn_lock_release() {
+    [ -d "$TXN_LOCK" ] || return 0
+    owner="$(cat "$TXN_LOCK/pid" 2>/dev/null || true)"
+    [ "$owner" = "$$" ] || [ "${OURFW_LOCK_HELD:-0}" = "1" ] || return 1
+    rm -rf "$TXN_LOCK"
+}
+
 strip_list() {
     # Output non-empty, non-comment lines with leading/trailing whitespace removed.
     [ -f "$1" ] || return 0

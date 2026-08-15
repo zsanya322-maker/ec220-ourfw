@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply OURFW v0.3 to an exact hadzhioglu/padavan-ng checkout.
+"""Apply OURFW v0.4-audit-fixed to an exact hadzhioglu/padavan-ng checkout.
 
 Design goals:
 - do not modify board flash layout or radio data
@@ -40,7 +40,7 @@ def insert_user_makefile(umk: Path):
     tab-exact line. The marker makes repeated integration idempotent.
     """
     s = umk.read_text(errors="replace")
-    marker = "# OURFW_USERDIR_V03"
+    marker = "# OURFW_USERDIR_V04"
     if marker in s:
         return
     pat = re.compile(r"^(?P<indent>\s*)dir_y\s*\+=\s*scripts\s*$", re.M)
@@ -111,8 +111,8 @@ def patch_http_api(src: Path):
 
     api = r'''
 /* OURFW: authenticated fixed bridge to mutable dispatcher.
- * No shell command from HTTP is executed directly. The bridge validates short
- * argv tokens and execs only /etc/storage/ourfw/runtime/ourfw-api.sh. */
+ * Non-status operations require a per-boot 256-bit CSRF token. No HTTP value
+ * becomes shell syntax; only fixed argv are passed to the mutable dispatcher. */
 static int
 ourfw_api_token_ok(const char *s)
 {
@@ -123,27 +123,43 @@ ourfw_api_token_ok(const char *s)
         unsigned char c = *p;
         if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
               (c >= '0' && c <= '9') || c == '_' || c == '-' ||
-              c == '.' || c == ':'))
-            return 0;
+              c == '.' || c == ':')) return 0;
         if (++n > 64) return 0;
         ++p;
     }
     return 1;
 }
 
+static int
+ourfw_api_streq(const char *a, const char *b)
+{
+    if (!a || !b) return 0;
+    while (*a && *b && *a == *b) { ++a; ++b; }
+    return *a == '\0' && *b == '\0';
+}
+
+static int
+ourfw_api_csrf_ok(const char *action, const char *supplied)
+{
+    FILE *fp; char expected[80]; size_t i = 0; int c;
+    if (ourfw_api_streq(action, "status")) return 1;
+    if (!supplied || !*supplied || !ourfw_api_token_ok(supplied)) return 0;
+    fp = fopen("/tmp/ourfw-csrf.token", "r");
+    if (!fp) return 0;
+    while (i + 1 < sizeof(expected) && (c = fgetc(fp)) != EOF && c != '\n' && c != '\r')
+        expected[i++] = (char)c;
+    expected[i] = '\0'; fclose(fp);
+    if (i != 64) return 0;
+    return ourfw_api_streq(expected, supplied);
+}
+
 static void
 ourfw_api_emit(FILE *stream)
 {
-    FILE *fp;
-    char buf[512];
-    size_t n;
+    FILE *fp; char buf[512]; size_t n;
     fp = fopen("/tmp/ourfw-api.json", "r");
-    if (!fp) {
-        fputs("{\"ok\":false,\"error\":\"no response\"}\n", stream);
-        return;
-    }
-    while ((n = fread(buf, 1, sizeof(buf), fp)) > 0)
-        fwrite(buf, 1, n, stream);
+    if (!fp) { fputs("{\"ok\":false,\"error\":\"no response\"}\n", stream); return; }
+    while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) fwrite(buf, 1, n, stream);
     fclose(fp);
 }
 
@@ -153,21 +169,21 @@ do_ourfw_api(const char *url, FILE *stream)
     const char *action = get_cgi("action");
     const char *p1 = get_cgi("p1");
     const char *p2 = get_cgi("p2");
+    const char *csrf = get_cgi("csrf");
     int rc;
     (void)url;
-
     if (!action || !*action) action = "status";
     if (!p1) p1 = "";
     if (!p2) p2 = "";
     if (!ourfw_api_token_ok(action) || !ourfw_api_token_ok(p1) || !ourfw_api_token_ok(p2)) {
-        fputs("{\"ok\":false,\"error\":\"invalid request\"}\n", stream);
-        return;
+        fputs("{\"ok\":false,\"error\":\"invalid request\"}\n", stream); return;
     }
-
+    if (!ourfw_api_csrf_ok(action, csrf)) {
+        fputs("{\"ok\":false,\"error\":\"csrf\"}\n", stream); return;
+    }
     remove("/tmp/ourfw-api.json");
     rc = eval("/etc/storage/ourfw/runtime/ourfw-api.sh", (char *)action, (char *)p1, (char *)p2);
-    if (rc != 0)
-        fprintf(stderr, "OURFW API dispatcher rc=%d\n", rc);
+    if (rc != 0) fprintf(stderr, "OURFW API dispatcher rc=%d\n", rc);
     ourfw_api_emit(stream);
 }
 
@@ -200,7 +216,6 @@ def main():
     verify_git_commit(root)
 
     # Build immutable rescue payload from the exact mutable source tree.
-    # "sh" prefix keeps this runnable on hosts without the exec bit (Windows).
     subprocess.run(["sh", str(HERE / "build/make-defaults.sh")], check=True)
     dst = trunk / "user/ourfw"
     shutil.rmtree(dst, ignore_errors=True)
@@ -216,8 +231,8 @@ def main():
         raise RuntimeError(f"expected one autostart.sh source, found {autostarts}")
     append_once(
         autostarts[0],
-        "# OURFW_LOADER_V03",
-        "\n# OURFW_LOADER_V03\n[ -x /usr/bin/ourfw-loader.sh ] && /usr/bin/ourfw-loader.sh >/dev/null 2>&1 &\n",
+        "# OURFW_LOADER_V04",
+        "\n# OURFW_LOADER_V04\n[ -x /usr/bin/ourfw-loader.sh ] && /usr/bin/ourfw-loader.sh >/dev/null 2>&1 &\n",
     )
 
     # Tiny authenticated API bridge. UI files themselves are overlaid later via
@@ -232,7 +247,6 @@ def main():
         ("CONFIG_IP6_NF_FILTER", "y"),
         ("CONFIG_IP6_NF_TARGET_REJECT", "y"),
         ("CONFIG_IP6_NF_MANGLE", "m"),
-        ("CONFIG_IP6_NF_QUEUE", "m"),
         ("CONFIG_BRIDGE_NF_EBTABLES", "m"),
     ]:
         set_kconfig(kernel, k, v)
@@ -243,7 +257,7 @@ def main():
     ]:
         set_kconfig(busy, k, v)
 
-    print("OURFW v0.3 integration applied successfully")
+    print("OURFW v0.4 integration applied successfully")
 
 
 if __name__ == "__main__":

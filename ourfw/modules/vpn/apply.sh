@@ -10,7 +10,7 @@ bool01 "$VPN_ENABLED" || exit 1
 bool01 "$VPN_USE_PEER_DNS" || exit 1
 case "$VPN_INTERFACE" in ''|*[!A-Za-z0-9_.-]*) log "vpn: invalid interface"; exit 1;; esac
 [ ${#VPN_INTERFACE} -le 15 ] || { log "vpn: interface name too long"; exit 1; }
-[ "$VPN_INTERFACE" = "wg0" ] || { log "vpn: v0.3 requires VPN_INTERFACE=wg0"; exit 1; }
+[ "$VPN_INTERFACE" = "wg0" ] || { log "vpn: v0.4 requires VPN_INTERFACE=wg0"; exit 1; }
 
 profile_get() {
     sec="$1"; key="$2"; file="$3"
@@ -30,7 +30,7 @@ profile_get() {
 
 stop_ourfw_vpn() {
     iface_exists "$VPN_INTERFACE" && ip link del dev "$VPN_INTERFACE" >/dev/null 2>&1 || true
-    rm -f "$STATE/vpn-endpoint4" "$STATE/vpn-dns" "$STATE/vpn-type"
+    rm -f "$STATE/vpn-endpoint4" "$STATE/vpn-endpoint6" "$STATE/vpn-dns" "$STATE/vpn-type"
 }
 
 # Keep Padavan's own VPN-client orchestrator disabled at runtime. Do not commit
@@ -144,7 +144,9 @@ ip link set dev "$VPN_INTERFACE" up >/dev/null 2>&1 || { log "vpn: interface up 
 # encrypted UDP packets would recursively enter the tunnel.
 ep="$($WG show "$VPN_INTERFACE" endpoints 2>/dev/null | awk 'NR==1{print $2}')"
 ep4="$(printf '%s' "$ep" | sed -n 's/^\([0-9][0-9.]*\):[0-9][0-9]*$/\1/p')"
+ep6="$(printf '%s' "$ep" | sed -n 's/^\[\([^]]*\)\]:[0-9][0-9]*$/\1/p')"
 [ -n "$ep4" ] && printf '%s\n' "$ep4" > "$STATE/vpn-endpoint4" || rm -f "$STATE/vpn-endpoint4"
+[ -n "$ep6" ] && printf '%s\n' "$ep6" > "$STATE/vpn-endpoint6" || rm -f "$STATE/vpn-endpoint6"
 if [ "$VPN_USE_PEER_DNS" = "1" ] && [ -n "$dns" ]; then
     printf '%s\n' "$dns" > "$STATE/vpn-dns"
 else
