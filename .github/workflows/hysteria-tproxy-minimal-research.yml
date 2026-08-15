@@ -1,0 +1,123 @@
+name: Measure Minimal EC220 Hysteria2 TPROXY
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v0.7b-tproxy-hy2
+    paths:
+      - 'research/hysteria/ec220_tproxy/**'
+      - '.github/workflows/hysteria-tproxy-minimal-research.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    env:
+      HY_COMMIT: 14e9fff1d972ab0187ac7fcf75b9514dc8664065
+      OURFW_IMAGE_BYTES: '6356996'
+      OURFW_SAFE_MAX_BYTES: '7798784'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: false
+
+      - name: Install measurement tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends file binutils squashfs-tools
+
+      - name: Checkout exact Hysteria2 release source
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/apernet/hysteria.git hysteria-src
+          git -C hysteria-src checkout --detach "$HY_COMMIT"
+          test "$(git -C hysteria-src rev-parse HEAD)" = "$HY_COMMIT"
+          mkdir -p hysteria-src/app/ec220_tproxy
+          cp research/hysteria/ec220_tproxy/*.go hysteria-src/app/ec220_tproxy/
+
+      - name: Build minimal plain and Salamander TPROXY clients
+        run: |
+          set -euo pipefail
+          cd hysteria-src
+          export GOOS=linux
+          export GOARCH=mipsle
+          export GOMIPS=softfloat
+          export CGO_ENABLED=0
+          go build -trimpath -ldflags '-s -w' -o ../ec220-hy2-tproxy-plain ./app/ec220_tproxy
+          go build -trimpath -ldflags '-s -w' -tags salamander -o ../ec220-hy2-tproxy-salamander ./app/ec220_tproxy
+          cd ..
+
+          for f in ec220-hy2-tproxy-plain ec220-hy2-tproxy-salamander; do
+            file "$f" | tee -a EC220-HY2-ELF.txt
+            file "$f" | grep -Eqi 'ELF 32-bit.*LSB.*MIPS'
+            if readelf -l "$f" | grep -q 'INTERP'; then
+              echo "ERROR: $f requires a dynamic interpreter" >&2
+              exit 73
+            fi
+            go version -m "$f" > "$f.go-build.txt"
+            stat -c "$f RAW_BYTES=%s" "$f" | tee -a EC220-HY2-RAW-SIZE.txt
+          done
+
+          grep -q 'github.com/apernet/go-tproxy' ec220-hy2-tproxy-plain.go-build.txt
+          if grep -q 'github.com/apernet/sing-tun' ec220-hy2-tproxy-plain.go-build.txt; then
+            echo 'ERROR: minimal plain client unexpectedly links sing-tun' >&2
+            exit 74
+          fi
+          if grep -q 'github.com/spf13/viper' ec220-hy2-tproxy-plain.go-build.txt; then
+            echo 'ERROR: minimal plain client unexpectedly links viper' >&2
+            exit 75
+          fi
+
+      - name: Measure exact Padavan-style SquashFS XZ cost
+        run: |
+          set -euo pipefail
+          : > HYSTERIA-TPROXY-MINIMAL-SIZE.txt
+          headroom=$((OURFW_SAFE_MAX_BYTES - OURFW_IMAGE_BYTES))
+          echo 'HYSTERIA_TPROXY_MINIMAL_VERIFY=OK' | tee -a HYSTERIA-TPROXY-MINIMAL-SIZE.txt
+          echo "UPSTREAM_COMMIT=$HY_COMMIT" | tee -a HYSTERIA-TPROXY-MINIMAL-SIZE.txt
+          echo "CURRENT_SAFE_HEADROOM_BYTES=$headroom" | tee -a HYSTERIA-TPROXY-MINIMAL-SIZE.txt
+
+          for variant in plain salamander; do
+            bin="ec220-hy2-tproxy-$variant"
+            root="root-$variant"
+            sq="ec220-hy2-tproxy-$variant.sqfs"
+            mkdir -p "$root/usr/bin"
+            cp "$bin" "$root/usr/bin/hysteria"
+            mksquashfs "$root" "$sq" \
+              -comp xz -b 131072 -all-root -no-exports -noappend -nopad -noI -no-xattrs >/dev/null
+            raw=$(stat -c %s "$bin")
+            packed=$(stat -c %s "$sq")
+            projected=$((OURFW_IMAGE_BYTES + packed))
+            over=$((projected - OURFW_SAFE_MAX_BYTES))
+            if (( packed <= headroom )); then fit=YES; else fit=NO; fi
+            key=$(printf '%s' "$variant" | tr '[:lower:]' '[:upper:]')
+            {
+              echo "${key}_RAW_BYTES=$raw"
+              echo "${key}_SQUASHFS_XZ_BYTES=$packed"
+              echo "${key}_PROJECTED_IMAGE_BYTES=$projected"
+              echo "${key}_OVER_SAFE_MAX_BYTES=$over"
+              echo "${key}_FIT_IN_CURRENT_FIRMWARE=$fit"
+            } | tee -a HYSTERIA-TPROXY-MINIMAL-SIZE.txt
+          done
+
+      - name: Upload measurement
+        uses: actions/upload-artifact@v4
+        with:
+          name: EC220-v0.7b-Hysteria2-tproxy-minimal
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            EC220-HY2-ELF.txt
+            EC220-HY2-RAW-SIZE.txt
+            HYSTERIA-TPROXY-MINIMAL-SIZE.txt
+            ec220-hy2-tproxy-plain.go-build.txt
+            ec220-hy2-tproxy-salamander.go-build.txt
+            ec220-hy2-tproxy-plain.sqfs
+            ec220-hy2-tproxy-salamander.sqfs
