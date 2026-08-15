@@ -27,6 +27,7 @@ jobs:
           if ! command -v python3 >/dev/null 2>&1; then apt-get update && apt-get install -y python3; fi
           chmod +x tests/*.sh build/*.sh tools/*.sh tools/*.py ci/*.sh ci/*.py
           sh ./tests/static-check.sh
+          sh ./tests/v064-hardware-regressions.sh
           python3 -m py_compile tools/harden-https-defaults.py tests/https-hardening-mock.py ci/verify-https-security.py
           python3 ./tests/https-hardening-mock.py
 
