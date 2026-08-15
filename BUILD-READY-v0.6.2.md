@@ -9,6 +9,9 @@ Independent host-side checks performed before commit:
 - Critical-rule fault injection (IPv4 kill, IPv6 reject, ip rule, PREROUTING jump, ipset add): all rejected with non-zero status and cleanup.
 - Watchdog missing-gateway / PPP default / OpenVPN target / future InetDetect cases: OK.
 - Loader broken-candidate and Storage-save refusal rollback: OK.
+- DNS no-resolv / invalid-domain / IPv6-peer-DNS fail-closed cases: OK.
+- Rollback runtime reapply failure retains pending and retries safely: OK.
+- Component archive special-file rejection (FIFO): OK.
 - WG/AWG handoff compatibility: OK.
 - Router-side modified shell syntax: OK.
 - v0.6.2 payload compressed size is below the new 64 KiB own-layer cap.

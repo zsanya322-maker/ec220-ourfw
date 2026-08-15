@@ -13,9 +13,13 @@ snapshot_good() {
     mv "$tmp" "$STATE/last-good.tar"
 }
 reapply() {
+    rc=0
     for m in zram vpn smart-routing adblock dns nfqws watchdog diagnostics; do
-        hook="$OURFW/modules/$m/apply.sh"; [ -x "$hook" ] && "$hook" || true
+        hook="$OURFW/modules/$m/apply.sh"
+        [ -x "$hook" ] || continue
+        if ! "$hook"; then log "rollback: reapply failed for $m"; rc=1; fi
     done
+    return "$rc"
 }
 case "${1:-}" in
   baseline)
@@ -38,7 +42,14 @@ case "${1:-}" in
     rm -rf "$OURFW/config" "$OURFW/profiles" "$OURFW/rules"; mkdir -p "$OURFW/config" "$OURFW/profiles" "$OURFW/rules"
     tar -xf "$STATE/last-good.tar" -C "$OURFW" || exit 1
     for sf in "$OURFW/config/vpn.conf" "$OURFW/profiles/vpn.conf" "$OURFW/profiles/openvpn.ovpn" "$OURFW/profiles/openvpn.auth"; do [ -f "$sf" ] && chmod 600 "$sf" 2>/dev/null || true; done
-    rm -f "$STATE/vpn-override-type" "$STATE/pending"; reapply
-    log "automatic rollback completed"; echo "ROLLED_BACK=1" ;;
+    rm -f "$STATE/vpn-override-type"
+    if reapply; then
+        rm -f "$STATE/pending"
+        log "automatic rollback completed"; echo "ROLLED_BACK=1"
+    else
+        log "automatic rollback restored files but runtime reapply failed; pending retained for retry"
+        echo "ROLLBACK_REAPPLY_FAILED=1" >&2
+        exit 1
+    fi ;;
   *) echo "usage: ourfw-rollback.sh {baseline|confirm|now}" >&2; exit 2 ;;
 esac

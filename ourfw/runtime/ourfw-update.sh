@@ -59,8 +59,14 @@ install_pkg() {
         case "$member" in manifest.conf|./manifest.conf|payload|payload/|payload/*|./payload|./payload/|./payload/*) ;; *) echo "invalid archive member: $member" >&2; rm -rf "$STAGE" "$LIST"; return 5;; esac
         case "/$member/" in */../*) echo "unsafe archive path" >&2; rm -rf "$STAGE" "$LIST"; return 5;; esac
     done < "$LIST"
-    if tar -tvjf "$PKG" 2>/dev/null | grep -Eq ' -> | link to '; then rm -rf "$STAGE" "$LIST"; echo "links are not allowed" >&2; return 5; fi
-    rm -f "$LIST"; tar -xjf "$PKG" -C "$STAGE" || { rm -rf "$STAGE"; return 5; }; [ -f "$STAGE/manifest.conf" ] || return 6
+    VLIST="$STATE/update-verbose.$$"
+    tar -tvjf "$PKG" > "$VLIST" 2>/dev/null || { rm -rf "$STAGE" "$LIST" "$VLIST"; return 5; }
+    if grep -Eq ' -> | link to ' "$VLIST"; then rm -rf "$STAGE" "$LIST" "$VLIST"; echo "links are not allowed" >&2; return 5; fi
+    # Component archives may contain only ordinary files and directories. Reject
+    # FIFOs/devices/sockets before extraction so an uploaded tar cannot create
+    # special filesystem objects as root even when its SHA was user-supplied.
+    awk 'substr($1,1,1)!="-" && substr($1,1,1)!="d" {bad=1} END{exit bad}' "$VLIST" || { rm -rf "$STAGE" "$LIST" "$VLIST"; echo "special archive members are not allowed" >&2; return 5; }
+    rm -f "$LIST" "$VLIST"; tar -xjf "$PKG" -C "$STAGE" || { rm -rf "$STAGE"; return 5; }; [ -f "$STAGE/manifest.conf" ] || return 6
     MODULE=$(sed -n 's/^module=//p' "$STAGE/manifest.conf" | head -n1); VERSION=$(sed -n 's/^version=//p' "$STAGE/manifest.conf" | head -n1); TYPE=$(sed -n 's/^type=//p' "$STAGE/manifest.conf" | head -n1); [ -n "$TYPE" ] || TYPE=module
     safe_id "$MODULE" && safe_id "$VERSION" && safe_id "$TYPE" || { rm -rf "$STAGE"; return 7; }
     case "$TYPE" in

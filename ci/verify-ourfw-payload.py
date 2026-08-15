@@ -32,13 +32,21 @@ if '/usr/share/ourfw/defaults.tar.bz2' in sq.paths:
             version=read('./VERSION').decode().strip() if './VERSION' in names else ''
             smart=read('./modules/smart-routing/apply.sh') if './modules/smart-routing/apply.sh' in names else b''
             watchdog=read('./modules/watchdog/watchdog.sh') if './modules/watchdog/watchdog.sh' in names else b''
+            dns=read('./modules/dns/apply.sh') if './modules/dns/apply.sh' in names else b''
+            rollback=read('./runtime/ourfw-rollback.sh') if './runtime/ourfw-rollback.sh' in names else b''
+            updater=read('./runtime/ourfw-update.sh') if './runtime/ourfw-update.sh' in names else b''
         need(version=='v0.6.2',f'defaults VERSION is {version!r}, expected v0.6.2')
-        for n in ['./modules/vpn/module-handoff.sh','./modules/vpn/apply.sh','./modules/vpn/failover.sh','./modules/smart-routing/apply.sh','./modules/watchdog/watchdog.sh']:
+        for n in ['./modules/vpn/module-handoff.sh','./modules/vpn/apply.sh','./modules/vpn/failover.sh','./modules/smart-routing/apply.sh','./modules/watchdog/watchdog.sh','./modules/dns/apply.sh','./runtime/ourfw-rollback.sh','./runtime/ourfw-update.sh']:
             need(n in names,f'defaults missing {n}')
         for token in [b'routing: critical rule failed:',b'IPv4 kill-switch reject',b'IPv6 output reject',b'policy ip rule']:
             need(token in smart,f'smart-routing payload lacks {token!r}')
         for token in [b'OURFW_WATCHDOG_ONESHOT',b'[ "$type" = openvpn ] && return 1',b'[ "$age" -ge 0 ]']:
             need(token in watchdog,f'watchdog payload lacks {token!r}')
+        for token in [b'no-resolv',b'dns: fail-closed:',b'IPv6 peer DNS $s unsupported',b'upstreams are deliberately IPv4-only']:
+            need(token in dns,f'dns payload lacks {token!r}')
+        for token in [b'if reapply; then',b'pending retained for retry']:
+            need(token in rollback,f'rollback payload lacks {token!r}')
+        need(b'special archive members are not allowed' in updater,'updater payload lacks special-file archive guard')
     except Exception as e:
         errs.append(f'defaults archive unreadable: {e}')
 lines=['PAYLOAD_VERIFY='+('FAILED' if errs else 'OK')]

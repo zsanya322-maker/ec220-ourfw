@@ -23,6 +23,9 @@ bash "$ROOT/tests/loader-upgrade-mock.sh"
 bash "$ROOT/tests/v062-network-faults.sh"
 bash "$ROOT/tests/v062-watchdog-mock.sh"
 bash "$ROOT/tests/v062-loader-failure-mock.sh"
+bash "$ROOT/tests/v062-dns-failclosed.sh"
+bash "$ROOT/tests/v062-rollback-reapply-mock.sh"
+bash "$ROOT/tests/v062-update-specialfiles.sh"
 sh "$ROOT/tests/romfs-verifier-mock.sh"
 bash "$ROOT/tests/runtime-mock.sh"
 sh "$ROOT/build/make-defaults.sh" >/dev/null
@@ -130,5 +133,8 @@ grep -q 'refresh_defaults_if_needed' "$ROOT/bootstrap/ourfw-loader.sh" || { echo
 grep -q 'routing: critical rule failed:' "$ROOT/ourfw/modules/smart-routing/apply.sh" || { echo 'routing critical failure gate missing' >&2; exit 51; }
 grep -q 'OURFW_WATCHDOG_ONESHOT' "$ROOT/ourfw/modules/watchdog/watchdog.sh" || { echo 'watchdog one-shot regression hook missing' >&2; exit 52; }
 grep -q 'OURFW_LIMIT=${OURFW_STORAGE_LIMIT:-65536}' "$ROOT/tools/storage-budget.sh" || { echo 'conservative OURFW Storage cap missing' >&2; exit 53; }
+grep -q "echo 'no-resolv'" "$ROOT/ourfw/modules/dns/apply.sh" || { echo 'explicit DNS no-resolv guard missing' >&2; exit 54; }
+grep -q 'pending retained for retry' "$ROOT/ourfw/runtime/ourfw-rollback.sh" || { echo 'rollback reapply retry guard missing' >&2; exit 55; }
+grep -q 'special archive members are not allowed' "$ROOT/ourfw/runtime/ourfw-update.sh" || { echo 'component special-file archive guard missing' >&2; exit 56; }
 
 echo 'STATIC CHECKS: OK'
