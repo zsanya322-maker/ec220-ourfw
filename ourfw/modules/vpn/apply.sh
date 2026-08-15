@@ -61,7 +61,7 @@ resolve4() {
 resolve6() {
     h="$1"
     case "$h" in *:*) printf '%s\n' "$h"; return 0;; esac
-    command -v ping6 >/dev/null 2>&1 || return 0
+    have_exec ping6 || return 0
     ping6 -c1 -W1 "$h" 2>/dev/null | sed -n '1{s/.*(\([0-9A-Fa-f:][0-9A-Fa-f:]*\)).*/\1/p;s/^PING[[:space:]][^[:space:]]*[[:space:]]\([0-9A-Fa-f:][0-9A-Fa-f:]*\).*/\1/p;}' | head -n1
 }
 
@@ -205,11 +205,11 @@ start_wg_family() {
     [ -n "$ep4" ] && printf '%s\n' "$ep4" > "$STATE/vpn-endpoint4" || true; [ -n "$ep6" ] && printf '%s\n' "$ep6" > "$STATE/vpn-endpoint6" || true
     if [ "$VPN_USE_PEER_DNS" = 1 ] && [ -n "$dns" ]; then printf '%s\n' "$dns" > "$STATE/vpn-dns"; fi
     printf '%s\n' "$type" > "$STATE/vpn-type"; printf '%s\n' "$VPN_INTERFACE" > "$STATE/vpn-interface"
-    log "vpn: $type ready on $VPN_INTERFACE"
+    log "vpn: $type ready on $VPN_INTFACE"
 }
 
 # OURFW remains removable: do not commit Padavan native VPN-client state.
-command -v nvram >/dev/null 2>&1 && nvram set vpnc_enable=0 >/dev/null 2>&1 || true
+have_exec nvram && nvram set vpnc_enable=0 >/dev/null 2>&1 || true
 if [ "$VPN_ENABLED" = 0 ]; then stop_ourfw_vpn; rm -f "$STATE/vpn-override-type"; log "vpn: disabled"; exit 0; fi
 
 type="$VPN_TYPE"

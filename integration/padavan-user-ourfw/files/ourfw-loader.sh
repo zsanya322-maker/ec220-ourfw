@@ -1,16 +1,37 @@
 #!/bin/sh
 # OURFW immutable rescue loader. It must never be the reason base Padavan fails.
-BASE=/etc/storage/ourfw
+BASE="${OURFW_LOADER_BASE:-/etc/storage/ourfw}"
 CTL="$BASE/runtime/ourfwctl.sh"
-DEFAULTS=/usr/share/ourfw/defaults.tar.bz2
-DISABLE=/etc/storage/ourfw.disabled
-RESET=/etc/storage/ourfw.reset
-LOG=/tmp/ourfw-loader.log
-WEB_DST=/www/ourfw
+DEFAULTS="${OURFW_LOADER_DEFAULTS:-/usr/share/ourfw/defaults.tar.bz2}"
+DISABLE="${OURFW_LOADER_DISABLE:-/etc/storage/ourfw.disabled}"
+RESET="${OURFW_LOADER_RESET:-/etc/storage/ourfw.reset}"
+LOG="${OURFW_LOADER_LOG:-/tmp/ourfw-loader.log}"
+WEB_DST="${OURFW_LOADER_WEB_DST:-/www/ourfw}"
 DNS_SAFE="$BASE/dnsmasq-ourfw.conf"
-CSRF=/tmp/ourfw-csrf.token
+CSRF="${OURFW_LOADER_CSRF:-/tmp/ourfw-csrf.token}"
+STORAGE_SAVE="${OURFW_LOADER_STORAGE_SAVE:-/sbin/mtd_storage.sh}"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) $*" >> "$LOG"; }
+
+# EC220-G5 v2 hardware uses a minimal BusyBox ash without the POSIX `command`
+# builtin. Resolve external executables directly through PATH instead.
+have_exec() {
+    _name="$1"
+    case "$_name" in */*) [ -x "$_name" ]; return $?;; esac
+    _oldifs="$IFS"; IFS=:
+    for _dir in ${PATH:-/bin:/sbin:/usr/bin:/usr/sbin}; do
+        [ -n "$_dir" ] || _dir=.
+        if [ -x "$_dir/$_name" ]; then IFS="$_oldifs"; return 0; fi
+    done
+    IFS="$_oldifs"
+    return 1
+}
+
+persist_storage() {
+    [ -x "$STORAGE_SAVE" ] || { log "storage save helper unavailable: $STORAGE_SAVE"; return 1; }
+    "$STORAGE_SAVE" save >/dev/null 2>&1 || { log "storage save failed"; return 1; }
+    return 0
+}
 
 ensure_dns_safe() {
     mkdir -p "$BASE" 2>/dev/null || return 1
@@ -23,7 +44,7 @@ clear_dns_policy() {
     : > "$DNS_SAFE" 2>/dev/null || true
     # If dnsmasq already started earlier in boot, force it to re-read the now
     # empty OURFW include. Failure here must never block base Padavan boot.
-    if command -v restart_dhcpd >/dev/null 2>&1; then
+    if have_exec restart_dhcpd; then
         restart_dhcpd >/dev/null 2>&1 || true
     elif [ -x /sbin/restart_dhcpd ]; then
         /sbin/restart_dhcpd >/dev/null 2>&1 || true
@@ -33,8 +54,10 @@ clear_dns_policy() {
 csrf_new() {
     umask 077
     token=""
-    if command -v sha256sum >/dev/null 2>&1; then
-        token="$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}')"
+    sum=/usr/bin/sha256sum
+    [ -x "$sum" ] || sum=/bin/sha256sum
+    if [ -x "$sum" ]; then
+        token="$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | "$sum" 2>/dev/null | awk '{print $1}')"
     fi
     case "$token" in *[!0-9A-Fa-f]*) token="";; esac
     if [ "${#token}" -eq 64 ] 2>/dev/null; then
@@ -44,18 +67,97 @@ csrf_new() {
     fi
 }
 
+normalize_mutable_perms() {
+    find "$BASE" -type f -name '*.sh' -exec chmod 0755 {} \; 2>/dev/null
+    for sf in "$BASE/config/vpn.conf" "$BASE/profiles/vpn.conf" "$BASE/profiles/openvpn.ovpn" "$BASE/profiles/openvpn.auth"; do [ -f "$sf" ] && chmod 0600 "$sf" 2>/dev/null || true; done
+}
+
+extract_defaults() {
+    dst="$1"
+    if have_exec bzcat; then
+        bzcat "$DEFAULTS" | tar -xf - -C "$dst"
+    else
+        bzip2 -dc "$DEFAULTS" | tar -xf - -C "$dst"
+    fi
+}
+
 seed_defaults() {
     [ -r "$DEFAULTS" ] || { log "defaults archive missing: $DEFAULTS"; return 1; }
     mkdir -p "$BASE" || return 1
-    if command -v bzcat >/dev/null 2>&1; then
-        bzcat "$DEFAULTS" | tar -xf - -C "$BASE" || return 1
-    else
-        bzip2 -dc "$DEFAULTS" | tar -xf - -C "$BASE" || return 1
-    fi
-    find "$BASE" -type f -name '*.sh' -exec chmod 0755 {} \; 2>/dev/null
-    for sf in "$BASE/config/vpn.conf" "$BASE/profiles/vpn.conf" "$BASE/profiles/openvpn.ovpn" "$BASE/profiles/openvpn.auth"; do [ -f "$sf" ] && chmod 0600 "$sf" 2>/dev/null || true; done
+    extract_defaults "$BASE" || return 1
+    normalize_mutable_perms
     ensure_dns_safe || true
     log "mutable OURFW seeded from firmware defaults"
+}
+
+defaults_version() {
+    probe="/tmp/ourfw-default-probe.$$"
+    rm -rf "$probe" 2>/dev/null
+    mkdir -p "$probe" || return 1
+    extract_defaults "$probe" >/dev/null 2>&1 || { rm -rf "$probe"; return 1; }
+    v="$(cat "$probe/VERSION" 2>/dev/null || true)"
+    rm -rf "$probe"
+    case "$v" in v[0-9]*.[0-9]*.[0-9]*) printf '%s\n' "$v";; *) return 1;; esac
+}
+
+refresh_defaults_if_needed() {
+    [ -x "$CTL" ] || return 0
+    new="$(defaults_version)" || { log 'cannot read firmware OURFW version; keeping current mutable tree'; return 1; }
+    cur="$(cat "$BASE/VERSION" 2>/dev/null || true)"
+    [ "$cur" = "$new" ] && return 0
+
+    old="/tmp/ourfw-preupgrade.$$"
+    rm -rf "$old" 2>/dev/null
+    mv "$BASE" "$old" || { log 'cannot stage mutable OURFW for firmware refresh'; return 1; }
+    if ! seed_defaults; then
+        rm -rf "$BASE" 2>/dev/null
+        mv "$old" "$BASE" 2>/dev/null || true
+        ensure_dns_safe || true
+        log "firmware OURFW refresh failed during seed; restored ${cur:-unknown}"
+        return 1
+    fi
+
+    # User backup contract defines these three trees as persistent user data.
+    # Overlay them onto the new firmware defaults so newly introduced files stay
+    # available while existing settings/profiles/rules are preserved.
+    for d in config profiles rules; do
+        [ -d "$old/$d" ] || continue
+        mkdir -p "$BASE/$d" || {
+            rm -rf "$BASE"; mv "$old" "$BASE" 2>/dev/null || true; ensure_dns_safe || true; return 1;
+        }
+        cp -a "$old/$d/." "$BASE/$d/" || {
+            rm -rf "$BASE"; mv "$old" "$BASE" 2>/dev/null || true; ensure_dns_safe || true; log "firmware OURFW refresh failed restoring $d"; return 1;
+        }
+    done
+    normalize_mutable_perms
+    ensure_dns_safe || true
+
+    # Validate the candidate while the previous mutable tree still exists in
+    # /tmp. A syntactically broken firmware payload must never destroy the
+    # last bootable OURFW tree just because VERSION changed.
+    if ! preflight_mutable; then
+        rm -rf "$BASE" 2>/dev/null
+        mv "$old" "$BASE" 2>/dev/null || true
+        ensure_dns_safe || true
+        log "firmware OURFW refresh failed preflight; restored ${cur:-unknown}"
+        return 1
+    fi
+
+    # Persist the new tree before discarding the previous one. mtd_storage.sh
+    # enforces the real whole-/etc/storage MTD size; if it refuses the write,
+    # restore the old in-RAM tree and keep base Padavan available.
+    if ! persist_storage; then
+        rm -rf "$BASE" 2>/dev/null
+        mv "$old" "$BASE" 2>/dev/null || true
+        ensure_dns_safe || true
+        "$STORAGE_SAVE" save >/dev/null 2>&1 || true
+        log "firmware OURFW refresh storage save failed; restored ${cur:-unknown}"
+        return 1
+    fi
+
+    rm -rf "$old"
+    log "mutable OURFW refreshed from firmware ${cur:-unknown} -> $new; config/profiles/rules preserved"
+    return 0
 }
 
 preflight_mutable() {
@@ -92,15 +194,17 @@ if [ -e "$RESET" ]; then
     fi
     rm -f "$RESET"
     seed_defaults || { ensure_dns_safe || true; exit 0; }
-    /sbin/mtd_storage.sh save >/dev/null 2>&1 || true
+    persist_storage || log "mutable OURFW reset seeded but storage save failed; current boot remains usable"
 fi
 
 if [ ! -x "$CTL" ]; then
     seed_defaults || { ensure_dns_safe || true; exit 0; }
-    /sbin/mtd_storage.sh save >/dev/null 2>&1 || true
+    persist_storage || log "mutable OURFW seeded but storage save failed; current boot remains usable"
 fi
 
 [ -x "$CTL" ] || { ensure_dns_safe || true; log "controller unavailable"; exit 0; }
+refresh_defaults_if_needed || { clear_dns_policy; log 'mutable OURFW firmware refresh rejected; base Padavan continues'; exit 0; }
+[ -x "$CTL" ] || { ensure_dns_safe || true; log "controller unavailable after refresh"; exit 0; }
 preflight_mutable || { clear_dns_policy; log "mutable OURFW rejected; base Padavan continues"; exit 0; }
 mount_mutable_ui || true
 "$CTL" boot >>"$LOG" 2>&1 || log "controller boot failed rc=$?; base Padavan remains available"

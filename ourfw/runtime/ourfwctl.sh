@@ -2,11 +2,34 @@
 . /etc/storage/ourfw/runtime/ourfw-common.sh 2>/dev/null || exit 1
 load_global || exit 1
 
+# Hardware compatibility: EC220 BusyBox ash has no `command` builtin.
+# Keep a per-boot CSRF token available from mutable runtime as defense-in-depth
+# even if the immutable loader cannot create it.
+csrf_ensure() {
+    f=/tmp/ourfw-csrf.token
+    t="$(cat "$f" 2>/dev/null || true)"
+    case "$t" in *[!0-9A-Fa-f]*) t="";; esac
+    [ "${#t}" -eq 64 ] 2>/dev/null && return 0
+
+    sum=/usr/bin/sha256sum
+    [ -x "$sum" ] || sum=/bin/sha256sum
+    [ -x "$sum" ] || { log "csrf: sha256sum unavailable"; return 1; }
+
+    t="$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | "$sum" 2>/dev/null | awk '{print $1}')"
+    case "$t" in *[!0-9A-Fa-f]*) t="";; esac
+    [ "${#t}" -eq 64 ] 2>/dev/null || { log "csrf: token generation failed"; return 1; }
+
+    ( umask 077; printf '%s\n' "$t" > "$f" ) || return 1
+    chmod 0600 "$f" 2>/dev/null || true
+    return 0
+}
+
 baseline_if_missing() {
     [ -f "$STATE/last-good.tar" ] || "$OURFW/runtime/ourfw-rollback.sh" baseline >/dev/null 2>&1
 }
 
 boot_modules() {
+    csrf_ensure || log "csrf: unavailable after mutable boot self-heal"
     [ "${OURFW_ENABLED:-1}" = "1" ] || exit 0
     hook_install || log "unable to install Padavan event hooks"
     baseline_if_missing
@@ -50,6 +73,7 @@ status() {
 }
 
 status_json() {
+    csrf_ensure || true
     ver="$(json_escape "$(cat "$OURFW/VERSION" 2>/dev/null || echo dev)")"
     wan="$(json_escape "$(wan_if)")"
 
