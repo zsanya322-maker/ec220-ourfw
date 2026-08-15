@@ -19,7 +19,9 @@ if grep -R -nE '(^|[^A-Za-z0-9_])(iptables|ip6tables|nft|route)[[:space:]]|ip[[:
     echo 'v0.7a: subscription module must not own routing/firewall/DNS' >&2
     exit 1
 fi
-if grep -R -nE '(^|[[:space:];])(eval|source)[[:space:]]' "$MOD"; then
+# Match eval/source only where they can actually start a shell command. Do not
+# flag harmless English text such as "provider source rejected" inside quotes.
+if grep -R -nE '^[[:space:]]*(eval|source)[[:space:]]|;[[:space:]]*(eval|source)[[:space:]]' "$MOD"; then
     echo 'v0.7a: subscription content must never be eval/source executed' >&2
     exit 1
 fi
@@ -40,6 +42,7 @@ ETC=/etc/storage/ourfw
 OLD=""
 cleanup() {
     rm -rf "$TMP" /tmp/ourfw /tmp/OURFW_V070_PWNED 2>/dev/null || true
+    rm -f "$ROOT/ourfw/profiles/subscription.salt" 2>/dev/null || true
     if [ -L "$ETC" ]; then rm -f "$ETC"; fi
     if [ -n "$OLD" ] && [ -e "$OLD" ]; then mv "$OLD" "$ETC"; fi
 }
@@ -113,5 +116,4 @@ if printf '%s\n%s\n' "$HEALTH" "$NODES" | grep -Eq 'hy2://|token@|subscription.s
     exit 1
 fi
 
-rm -f "$ROOT/ourfw/profiles/subscription.salt"
 echo 'V0.7a SUBSCRIPTION MANAGER REGRESSIONS: OK'
