@@ -21,19 +21,19 @@ nodes_json() {
 
 case "${1:-status}" in
   status)
-    exec /etc/storage/ourfw/modules/subscription/health.sh
+    exec /bin/sh /etc/storage/ourfw/modules/subscription/health.sh
     ;;
   nodes)
     nodes_json
     ;;
   refresh)
-    /etc/storage/ourfw/modules/subscription/fetch.sh || exit $?
-    /etc/storage/ourfw/modules/subscription/parse.sh || exit $?
-    exec /etc/storage/ourfw/modules/subscription/health.sh
+    /bin/sh /etc/storage/ourfw/modules/subscription/fetch.sh || exit $?
+    /bin/sh /etc/storage/ourfw/modules/subscription/parse.sh || exit $?
+    exec /bin/sh /etc/storage/ourfw/modules/subscription/health.sh
     ;;
   parse)
-    /etc/storage/ourfw/modules/subscription/parse.sh || exit $?
-    exec /etc/storage/ourfw/modules/subscription/health.sh
+    /bin/sh /etc/storage/ourfw/modules/subscription/parse.sh || exit $?
+    exec /bin/sh /etc/storage/ourfw/modules/subscription/health.sh
     ;;
   *)
     printf '%s\n' '{"ok":false,"error":"unsupported subscription operation"}'
