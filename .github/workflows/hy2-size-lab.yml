@@ -1,0 +1,115 @@
+name: Hysteria2 EC220 Size Lab
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/hy2-size-lab
+    paths:
+      - 'experiments/hy2-ec220/**'
+      - '.github/workflows/hy2-size-lab.yml'
+
+permissions:
+  contents: read
+
+env:
+  HYSTERIA_TAG: app/v2.12.1
+  HYSTERIA_COMMIT: 14e9fff1d972ab0187ac7fcf75b9514dc8664065
+  UPSTREAM_MIPSLE_SF_BYTES: '24707265'
+  UPSTREAM_MIPSLE_SF_SHA256: 8ca17e22f028fcd25384d4259e25254349131c096a87233078b00640afd33dd4
+
+jobs:
+  size-lab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.1'
+          cache: false
+
+      - name: Checkout exact Hysteria source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout https://github.com/apernet/hysteria.git upstream
+          git -C upstream fetch --depth=1 origin "$HYSTERIA_COMMIT"
+          git -C upstream checkout --detach FETCH_HEAD
+          test "$(git -C upstream rev-parse HEAD)" = "$HYSTERIA_COMMIT"
+          mkdir -p upstream/app/cmd/hy2-ec220
+          cp experiments/hy2-ec220/main.go upstream/app/cmd/hy2-ec220/main.go
+
+      - name: Build EC220 prototype
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          pushd upstream/app
+          go mod download
+          CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat \
+            go build -trimpath -buildvcs=false \
+            -ldflags="-s -w -buildid= -X main.buildVersion=hy2-ec220-lab-${HYSTERIA_COMMIT:0:8}" \
+            -o ../../dist/hy2-ec220-tproxy-mipsle-sf ./cmd/hy2-ec220
+          popd
+          test -s dist/hy2-ec220-tproxy-mipsle-sf
+
+      - name: Inspect size and ELF
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin=dist/hy2-ec220-tproxy-mipsle-sf
+          bytes=$(stat -c %s "$bin")
+          sha=$(sha256sum "$bin" | awk '{print $1}')
+          pct=$(python3 - <<PY
+          b=$bytes
+          u=int('$UPSTREAM_MIPSLE_SF_BYTES')
+          print(f'{b/u*100:.1f}')
+          PY
+          )
+          saving=$(python3 - <<PY
+          b=$bytes
+          u=int('$UPSTREAM_MIPSLE_SF_BYTES')
+          print(f'{(1-b/u)*100:.1f}')
+          PY
+          )
+          {
+            echo "HY2_EC220_SIZE_LAB=OK"
+            echo "UPSTREAM_TAG=$HYSTERIA_TAG"
+            echo "UPSTREAM_COMMIT=$HYSTERIA_COMMIT"
+            echo "TARGET=linux/mipsle/softfloat"
+            echo "FEATURES=client-core,tcp-tproxy,udp-tproxy,salamander-obfs,small-quic-windows"
+            echo "PROTOTYPE_BYTES=$bytes"
+            echo "PROTOTYPE_SHA256=$sha"
+            echo "UPSTREAM_MONOLITH_BYTES=$UPSTREAM_MIPSLE_SF_BYTES"
+            echo "UPSTREAM_MONOLITH_SHA256=$UPSTREAM_MIPSLE_SF_SHA256"
+            echo "PROTOTYPE_PERCENT_OF_MONOLITH=$pct"
+            echo "SIZE_REDUCTION_PERCENT=$saving"
+            echo ""
+            file "$bin"
+            echo ""
+            if command -v readelf >/dev/null 2>&1; then
+              readelf -h "$bin" | sed -n '1,30p'
+            fi
+          } | tee dist/SIZE-REPORT.txt
+
+      - name: Guard EC220 RAM experiment size
+        shell: bash
+        run: |
+          set -euo pipefail
+          bytes=$(stat -c %s dist/hy2-ec220-tproxy-mipsle-sf)
+          # This is only a lab gate, not a certification. A binary at or above
+          # 16 MiB is not worth hardware testing on a 64 MiB router yet.
+          test "$bytes" -lt 16777216 || {
+            echo "prototype is still >=16 MiB; do not hardware-test it" >&2
+            exit 1
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hy2-ec220-size-lab
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            dist/hy2-ec220-tproxy-mipsle-sf
+            dist/SIZE-REPORT.txt
