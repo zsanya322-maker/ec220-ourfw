@@ -1,0 +1,2 @@
+# Optional exact provider host allow list, one host per line.
+# Empty means any syntactically valid HTTPS host is allowed.
