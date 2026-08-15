@@ -14,7 +14,9 @@ STORAGE_SAVE="${OURFW_LOADER_STORAGE_SAVE:-/sbin/mtd_storage.sh}"
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) $*" >> "$LOG"; }
 
 persist_storage() {
-    [ -x "$STORAGE_SAVE" ] && "$STORAGE_SAVE" save >/dev/null 2>&1 || true
+    [ -x "$STORAGE_SAVE" ] || { log "storage save helper unavailable: $STORAGE_SAVE"; return 1; }
+    "$STORAGE_SAVE" save >/dev/null 2>&1 || { log "storage save failed"; return 1; }
+    return 0
 }
 
 ensure_dns_safe() {
@@ -112,8 +114,31 @@ refresh_defaults_if_needed() {
     done
     normalize_mutable_perms
     ensure_dns_safe || true
+
+    # Validate the candidate while the previous mutable tree still exists in
+    # /tmp.  A syntactically broken firmware payload must never destroy the
+    # last bootable OURFW tree just because VERSION changed.
+    if ! preflight_mutable; then
+        rm -rf "$BASE" 2>/dev/null
+        mv "$old" "$BASE" 2>/dev/null || true
+        ensure_dns_safe || true
+        log "firmware OURFW refresh failed preflight; restored ${cur:-unknown}"
+        return 1
+    fi
+
+    # Persist the new tree before discarding the previous one.  mtd_storage.sh
+    # enforces the real whole-/etc/storage MTD size; if it refuses the write,
+    # restore the old in-RAM tree and keep base Padavan available.
+    if ! persist_storage; then
+        rm -rf "$BASE" 2>/dev/null
+        mv "$old" "$BASE" 2>/dev/null || true
+        ensure_dns_safe || true
+        "$STORAGE_SAVE" save >/dev/null 2>&1 || true
+        log "firmware OURFW refresh storage save failed; restored ${cur:-unknown}"
+        return 1
+    fi
+
     rm -rf "$old"
-    persist_storage
     log "mutable OURFW refreshed from firmware ${cur:-unknown} -> $new; config/profiles/rules preserved"
     return 0
 }
@@ -152,12 +177,12 @@ if [ -e "$RESET" ]; then
     fi
     rm -f "$RESET"
     seed_defaults || { ensure_dns_safe || true; exit 0; }
-    persist_storage
+    persist_storage || log "mutable OURFW reset seeded but storage save failed; current boot remains usable"
 fi
 
 if [ ! -x "$CTL" ]; then
     seed_defaults || { ensure_dns_safe || true; exit 0; }
-    persist_storage
+    persist_storage || log "mutable OURFW seeded but storage save failed; current boot remains usable"
 fi
 
 [ -x "$CTL" ] || { ensure_dns_safe || true; log "controller unavailable"; exit 0; }

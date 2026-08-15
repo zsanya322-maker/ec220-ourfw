@@ -9,14 +9,29 @@ load_conf "$CFG" || exit 1
 for b in WATCHDOG_ENABLED WATCHDOG_REBOOT WATCHDOG_USE_INETDETECT; do eval "v=\${$b}"; bool01 "$v" || exit 1; done
 for n in WATCHDOG_INTERVAL WATCHDOG_FAILS WATCHDOG_VPN_HANDSHAKE_MAX_AGE WATCHDOG_INETDETECT_MAX_AGE; do eval "v=\${$n}"; is_uint "$v" || exit 1; done
 [ "$WATCHDOG_INTERVAL" -ge 10 ] || WATCHDOG_INTERVAL=10
+[ "$WATCHDOG_FAILS" -ge 1 ] 2>/dev/null || { log "watchdog: WATCHDOG_FAILS must be >= 1"; exit 1; }
 fail=0
-check_gateway() { gw="$(ip -4 route show default 2>/dev/null | awk '/^default/{print $3; exit}')"; [ -z "$gw" ] || ping -c1 -W1 "$gw" >/dev/null 2>&1; }
+check_gateway() {
+    line="$(ip -4 route show default 2>/dev/null | awk '/^default/{print; exit}')"
+    [ -n "$line" ] || return 1
+    gw="$(printf '%s\n' "$line" | awk '{for(i=1;i<=NF;i++)if($i=="via"){print $(i+1); exit}}')"
+    if [ -n "$gw" ]; then
+        ping -c1 -W1 "$gw" >/dev/null 2>&1
+        return $?
+    fi
+    # PPP/point-to-point defaults commonly have `default dev ppp0` with no
+    # next-hop address. In that case a live default-route interface is the
+    # meaningful gateway-scope signal; Internet reachability is checked by the
+    # separate internet scope.
+    dev="$(printf '%s\n' "$line" | awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1); exit}}')"
+    [ -n "$dev" ] && iface_exists "$dev"
+}
 check_native_inetdetect() {
     [ "$WATCHDOG_USE_INETDETECT" = 1 ] || return 2
     [ -f "$STATE/inet-state" ] || return 2
     set -- $(cat "$STATE/inet-state" 2>/dev/null); ts="${1:-0}"; st="${2:-}"
     is_uint "$ts" || return 2; now="$(date +%s 2>/dev/null || echo 0)"; is_uint "$now" || return 2
-    age=$((now-ts)); [ "$age" -le "$WATCHDOG_INETDETECT_MAX_AGE" ] 2>/dev/null || return 2
+    age=$((now-ts)); [ "$age" -ge 0 ] 2>/dev/null && [ "$age" -le "$WATCHDOG_INETDETECT_MAX_AGE" ] 2>/dev/null || return 2
     [ "$st" = 1 ]
 }
 check_internet() {
@@ -30,7 +45,13 @@ check_vpn() {
     [ "$VPN_ENABLED" = 0 ] && return 0
     iface="$(active_vpn_if)"; type="$(active_vpn_type)"
     iface_exists "$iface" || return 1
-    [ -z "$WATCHDOG_VPN_TARGET" ] || ping -I "$iface" -c1 -W2 "$WATCHDOG_VPN_TARGET" >/dev/null 2>&1 && return 0
+    if [ -n "$WATCHDOG_VPN_TARGET" ]; then
+        ping -I "$iface" -c1 -W2 "$WATCHDOG_VPN_TARGET" >/dev/null 2>&1 && return 0
+        # For OpenVPN there is no independent cryptographic handshake timestamp.
+        # A live daemon with a dead/non-passing tun0 is not healthy when an
+        # explicit target was configured: fail so failover/repair can run.
+        [ "$type" = openvpn ] && return 1
+    fi
     case "$type" in
       wireguard) WG=/usr/sbin/wg ;;
       amneziawg) WG=/usr/sbin/awg ;;
@@ -59,6 +80,10 @@ repair() {
     if [ "$WATCHDOG_REBOOT" = 1 ]; then log "watchdog: repair failed, reboot enabled"; reboot; fi
     return 1
 }
+if [ "${OURFW_WATCHDOG_ONESHOT:-0}" = 1 ]; then
+    run_checks
+    exit $?
+fi
 [ "$WATCHDOG_ENABLED" = 1 ] || exit 0
 while :; do
     if run_checks; then fail=0; else fail=$((fail+1)); log "watchdog: failed check $fail/$WATCHDOG_FAILS"; [ "$fail" -lt "$WATCHDOG_FAILS" ] || { repair || true; fail=0; }; fi

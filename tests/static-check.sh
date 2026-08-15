@@ -11,14 +11,18 @@ done
 find "$ROOT/tests" -type f -name '*.sh' | while IFS= read -r f; do
   bash -n "$f" || exit 20
 done
-python3 -m py_compile "$ROOT/tools/apply-to-padavan.py" "$ROOT/tools/verify-padavan-tree.py" "$ROOT/tools/inspect-images.py" "$ROOT/ci/verify-built-image.py" "$ROOT/ci/verify-ourfw-payload.py" "$ROOT/tests/integration-mock.py" "$ROOT/tests/reference-recovery.py" "$ROOT/tests/audit-regressions.py" "$ROOT/tests/v050-regressions.py" "$ROOT/tests/v060-regressions.py" "$ROOT/tests/v061-regressions.py"
+python3 -m py_compile "$ROOT/tools/apply-to-padavan.py" "$ROOT/tools/verify-padavan-tree.py" "$ROOT/tools/inspect-images.py" "$ROOT/ci/verify-built-image.py" "$ROOT/ci/verify-ourfw-payload.py" "$ROOT/tests/integration-mock.py" "$ROOT/tests/reference-recovery.py" "$ROOT/tests/audit-regressions.py" "$ROOT/tests/v050-regressions.py" "$ROOT/tests/v060-regressions.py" "$ROOT/tests/v061-regressions.py" "$ROOT/tests/v062-regressions.py"
 python3 "$ROOT/tests/integration-mock.py"
 python3 "$ROOT/tests/audit-regressions.py"
 python3 "$ROOT/tests/v050-regressions.py"
 python3 "$ROOT/tests/v060-regressions.py"
 python3 "$ROOT/tests/v061-regressions.py"
+python3 "$ROOT/tests/v062-regressions.py"
 bash "$ROOT/tests/v061-module-handoff.sh"
 bash "$ROOT/tests/loader-upgrade-mock.sh"
+bash "$ROOT/tests/v062-network-faults.sh"
+bash "$ROOT/tests/v062-watchdog-mock.sh"
+bash "$ROOT/tests/v062-loader-failure-mock.sh"
 sh "$ROOT/tests/romfs-verifier-mock.sh"
 bash "$ROOT/tests/runtime-mock.sh"
 sh "$ROOT/build/make-defaults.sh" >/dev/null
@@ -68,7 +72,7 @@ for k in CONFIG_FIRMWARE_INCLUDE_SSWAN CONFIG_FIRMWARE_INCLUDE_DNSCRYPT CONFIG_F
   if grep -q "^${k}=y$" "$ROOT/build.config"; then echo "excluded feature unexpectedly enabled: $k" >&2; exit 30; fi
 done
 
-# Generated runtime state must stay in /tmp; 128 KiB persistent Storage is precious.
+# Generated runtime state must stay in /tmp; persistent Storage is precious.
 grep -q 'GEN="$STATE/generated"' "$ROOT/ourfw/runtime/ourfw-common.sh" || {
   echo 'generated files are not volatile' >&2; exit 31;
 }
@@ -119,5 +123,12 @@ done
 grep -q 'module-handoff.sh' "$ROOT/ourfw/modules/vpn/apply.sh" || { echo 'WG/AWG module handoff missing' >&2; exit 48; }
 grep -q 'refresh_defaults_if_needed' "$ROOT/bootstrap/ourfw-loader.sh" || { echo 'firmware mutable refresh missing' >&2; exit 49; }
 [ -f "$ROOT/ci/check-kernel-export-warnings.sh" ] || { echo 'kernel export warning gate missing' >&2; exit 50; }
+
+# v0.6.2: policy protection must fail closed on command errors, watchdog liveness
+# must not accept missing gateway/dead OpenVPN transport, and OURFW may use at
+# most half the Storage partition by default.
+grep -q 'routing: critical rule failed:' "$ROOT/ourfw/modules/smart-routing/apply.sh" || { echo 'routing critical failure gate missing' >&2; exit 51; }
+grep -q 'OURFW_WATCHDOG_ONESHOT' "$ROOT/ourfw/modules/watchdog/watchdog.sh" || { echo 'watchdog one-shot regression hook missing' >&2; exit 52; }
+grep -q 'OURFW_LIMIT=${OURFW_STORAGE_LIMIT:-65536}' "$ROOT/tools/storage-budget.sh" || { echo 'conservative OURFW Storage cap missing' >&2; exit 53; }
 
 echo 'STATIC CHECKS: OK'

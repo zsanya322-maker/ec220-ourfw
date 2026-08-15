@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import sys
+import re, sys
 R=Path(__file__).resolve().parents[1]
 errs=[]
 def t(p): return (R/p).read_text(errors='replace')
@@ -15,9 +15,10 @@ backup=t('ourfw/runtime/ourfw-backup.sh') if (R/'ourfw/runtime/ourfw-backup.sh')
 static=t('tests/static-check.sh') if (R/'tests/static-check.sh').exists() else ''
 wf=t('.github/workflows/build-ourfw.yml') if (R/'.github/workflows/build-ourfw.yml').exists() else ''
 payload=t('ci/verify-ourfw-payload.py') if (R/'ci/verify-ourfw-payload.py').exists() else ''
-exp=t('ci/check-kernel-export-warnings.sh')
+exp=t('ci/check-kernel-export-warnings.sh') if (R/'ci/check-kernel-export-warnings.sh').exists() else ''
 
-need(ver == 'v0.6.1', f'expected v0.6.1, got {ver!r}')
+m=re.fullmatch(r'v(\d+)\.(\d+)\.(\d+)',ver)
+need(bool(m) and tuple(map(int,m.groups())) >= (0,6,1), f'expected version >= v0.6.1, got {ver!r}')
 need('module-handoff.sh' in apply and 'WG/AWG kernel module handoff failed' in apply, 'VPN apply does not enforce WG/AWG module handoff')
 need('"$MODPROBE" -r "$other"' in hand, 'handoff does not unload conflicting module')
 need('module_loaded "$other" &&' in hand and 'module_loaded "$target" ||' in hand, 'handoff does not verify post-unload/post-load state')
@@ -27,7 +28,7 @@ need('refresh_defaults_if_needed' in loader and 'defaults_version' in loader, 'f
 need('for d in config profiles rules' in loader and 'cp -a "$old/$d/." "$BASE/$d/"' in loader, 'firmware refresh does not preserve user data contract')
 need('config profiles rules' in backup, 'backup/user-data contract changed unexpectedly')
 need('mv "$BASE" "$old"' in loader and 'mv "$old" "$BASE"' in loader, 'firmware refresh rollback path missing')
-need('v061-module-handoff.sh' in static and 'loader-upgrade-mock.sh' in static, 'new dynamic regressions are not wired into static checks')
+need('v061-module-handoff.sh' in static and 'loader-upgrade-mock.sh' in static, 'v0.6.1 dynamic regressions are not wired into static checks')
 need('Check kernel export warnings' in wf and 'MODULE-EXPORTS.txt' in wf, 'real MIPS CI does not gate/report duplicate kernel exports')
 need('exported twice' in exp and 'UNEXPECTED=' in exp and 'WG_AWG_MUTUAL_EXCLUSION=ENFORCED' in exp, 'kernel export warning gate incomplete')
 need("'./modules/vpn/module-handoff.sh'" in payload, 'final-image payload verifier does not require handoff helper in defaults')
