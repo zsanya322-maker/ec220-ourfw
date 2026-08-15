@@ -11,8 +11,8 @@ done
 python3 -m py_compile "$ROOT/tools/apply-to-padavan.py" "$ROOT/tools/verify-padavan-tree.py" "$ROOT/tools/inspect-images.py" "$ROOT/tests/integration-mock.py" "$ROOT/tests/reference-recovery.py" "$ROOT/tests/audit-regressions.py"
 python3 "$ROOT/tests/integration-mock.py"
 python3 "$ROOT/tests/audit-regressions.py"
-"$ROOT/build/make-defaults.sh" >/dev/null
-"$ROOT/tools/storage-budget.sh"
+sh "$ROOT/build/make-defaults.sh" >/dev/null
+sh "$ROOT/tools/storage-budget.sh"
 
 # Mutable configuration is parsed as data, never sourced as shell.
 if grep -R -nE '^[[:space:]]*\.[[:space:]]+.*config/|source[[:space:]].*config/' "$ROOT/ourfw"; then

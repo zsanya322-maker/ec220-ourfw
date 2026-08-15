@@ -23,8 +23,8 @@ jobs:
       - name: Static checks
         run: |
           if ! command -v python3 >/dev/null 2>&1; then apt-get update && apt-get install -y python3; fi
-          chmod +x tests/static-check.sh build/*.sh tools/*.py ci/*.sh
-          ./tests/static-check.sh
+          chmod +x tests/*.sh build/*.sh tools/*.sh tools/*.py ci/*.sh
+          sh ./tests/static-check.sh
 
       - name: Load pinned variables
         run: |
