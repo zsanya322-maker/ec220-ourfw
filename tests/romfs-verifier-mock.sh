@@ -13,7 +13,7 @@ ln -s /usr/bin/dropbearmulti "$R/usr/sbin/dropbear"
 for f in wg awg; do printf x > "$R/usr/sbin/$f"; chmod 755 "$R/usr/sbin/$f"; done
 for f in nfqws zapret.sh; do printf x > "$R/usr/bin/$f"; chmod 755 "$R/usr/bin/$f"; done
 printf x > "$R/bin/busybox"; chmod 755 "$R/bin/busybox"
-ln -s /usr/bin/busybox "$R/usr/bin/sha256sum"
+ln -s ../../bin/busybox "$R/usr/bin/sha256sum"
 ln -s /bin/busybox "$R/bin/base64"
 printf 'ourfw-loader.sh\n' > "$R/usr/bin/autostart.sh"
 printf '<html>Backup Center vpn-profile</html>\n' > "$R/www/ourfw/index.asp"
