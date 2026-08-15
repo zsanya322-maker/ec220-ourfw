@@ -18,7 +18,9 @@ reapply() {
     done
 }
 case "${1:-}" in
-  baseline) snapshot_good ;;
+  baseline)
+    [ ! -f "$STATE/pending" ] && [ ! -f "$STATE/update-pending" ] || { echo "transaction pending; baseline refused" >&2; exit 3; }
+    snapshot_good ;;
   confirm)
     [ -f "$STATE/pending" ] || { echo "NO_PENDING=1"; exit 0; }
     kill_pidfile "$STATE/rollback-guard.pid"

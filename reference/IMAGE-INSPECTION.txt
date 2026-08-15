@@ -1,12 +1,24 @@
-== /mnt/data/TL_EC220_3.4.3.9L-102-c0936ef933.zip ==
-TL_EC220_3.4.3.9L-102-c0936ef933.bin: 7733252 bytes (0x760004) SHA256=5762407497962d7b2dbad666be31dcf0a4baab0b5b5b9151dd945e19f0ad4965
-  head32=030000007665722e20322e3000ffffffffffffffffffffffffffffffffffffff
-  squashfs 0x109c30
-tp_recovery.bin: 7864324 bytes (0x780004) SHA256=dbfc65a30119d5d8fdc83cb0664edcb417e37b15203a1831e47f202fbec85d36
-  head32=0000000000000000000000000000000000000000000000000000000000000000
-  squashfs 0x129c30
-== /mnt/data/EC220_G5RUERv2_3_23_15_0_9_1_up_boot200803_2020_08_03_11_38_49.zip ==
-EC220_G5RUERv2_3_23_15_0_9_1_up_boot200803_2020_08_03_11_38_49.bin: 8126976 bytes (0x7c0200) SHA256=57ec5cad147b2d1bcc44fc5944b3c32ce37cd4f757e88c23683a0e837c1707db
-  head32=030000034c0bd0d6a661ff193904e181513b2fd000112233445566778899aabb
-  squashfs 0x220200
-RELATION: tp_recovery.bin = 131072 (0x20000) zero bytes + TL_EC220_3.4.3.9L-102-c0936ef933.bin
+Known CI image inspection before v0.5
+=====================================
+Source run: OURFW v0.4.3 CI failure artifact.
+Image: TL_EC220_G5-V2_3.4.3.9L-102-0e6caa274.bin
+Size: 4456452 bytes
+SHA256: 1fbec3fd34c91b68cfe643873c8cf658ae8e98c3b6fa3a851628e3f43ee1c404
+
+Direct SquashFS/XZ inspection confirmed in the FINAL image:
+- /usr/bin/ourfw-loader.sh
+- /usr/share/ourfw/defaults.tar.bz2
+- /www/ourfw/index.asp
+- wg / awg / nfqws / zapret.sh
+- wireguard.ko / amneziawg.ko
+- nfnetlink_queue.ko / xt_NFQUEUE.ko / ip6table_mangle.ko
+- Dropbear SSH
+- compiled ourfw_api.cgi bridge
+- OURFW loader in autostart
+
+Why CI v0.4.3 was red:
+/usr/sbin/dropbear is an absolute target-root symlink to /usr/bin/dropbearmulti.
+The old verifier used host `test -e`, which followed the link in the CI host root
+instead of trunk/romfs. The firmware symlink itself was valid.
+
+v0.5 uses target-root-aware symlink resolution plus a separate final-image parser.

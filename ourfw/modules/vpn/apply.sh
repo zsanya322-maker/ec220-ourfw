@@ -10,7 +10,7 @@ bool01 "$VPN_ENABLED" || exit 1
 bool01 "$VPN_USE_PEER_DNS" || exit 1
 case "$VPN_INTERFACE" in ''|*[!A-Za-z0-9_.-]*) log "vpn: invalid interface"; exit 1;; esac
 [ ${#VPN_INTERFACE} -le 15 ] || { log "vpn: interface name too long"; exit 1; }
-[ "$VPN_INTERFACE" = "wg0" ] || { log "vpn: v0.4 requires VPN_INTERFACE=wg0"; exit 1; }
+[ "$VPN_INTERFACE" = "wg0" ] || { log "vpn: v0.5 requires VPN_INTERFACE=wg0"; exit 1; }
 
 profile_get() {
     sec="$1"; key="$2"; file="$3"

@@ -75,10 +75,16 @@ jobs:
         run: |
           ./ci/prepare-artifacts.sh padavan-ng dist
 
+      - name: Verify final firmware image
+        run: |
+          fw=$(find dist -maxdepth 1 -type f -name 'TL_EC220_G5-V2_OURFW-v0.5.0-*.bin' -print -quit)
+          test -n "$fw"
+          python3 ./ci/verify-built-image.py "$fw" IMAGE-VERIFY.txt
+
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-          name: EC220-G5-v2-OURFW-v0.4.3
+          name: EC220-G5-v2-OURFW-v0.5.0
           retention-days: 14
           if-no-files-found: error
           path: |
@@ -87,6 +93,7 @@ jobs:
             TOOLCHAIN.sha256
             build.log
             ROMFS-VERIFY.txt
+            IMAGE-VERIFY.txt
 
       - name: Upload diagnostics on failure
         if: failure()
@@ -100,5 +107,7 @@ jobs:
             PADAVAN_COMMIT_USED.txt
             TOOLCHAIN.sha256
             ROMFS-VERIFY.txt
+            IMAGE-VERIFY.txt
             padavan-ng/trunk/.config
             padavan-ng/trunk/images/*
+            dist/*

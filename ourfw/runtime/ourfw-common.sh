@@ -6,7 +6,7 @@ LOG=/tmp/ourfw.log
 # Generated runtime files are intentionally volatile: do not waste 128 KiB Storage.
 GEN="$STATE/generated"
 GLOBAL="$OURFW/config/global.conf"
-mkdir -p "$STATE" "$GEN" "$OURFW/history" 2>/dev/null
+mkdir -p "$STATE" "$GEN" 2>/dev/null
 
 log() {
     logger -t OURFW -- "$*" 2>/dev/null
@@ -213,4 +213,19 @@ EOT
 json_escape() {
     # Minimal JSON string escape for status output.
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g'
+}
+
+candidate_conf_set() {
+    # candidate_conf_set FILE KEY VALUE TAG
+    f="$1"; key="$2"; val="$3"; tag="$4"
+    [ -f "$f" ] || return 1
+    safe_id "$tag" || return 1
+    tmp="$STATE/candidate-conf.$$"
+    cp "$f" "$tmp" || return 1
+    conf_set "$tmp" "$key" "$val" || { rm -f "$tmp"; return 1; }
+    case "$f" in "$OURFW"/*) rel=${f#"$OURFW"/};; *) rm -f "$tmp"; return 1;; esac
+    OURFW_CANDIDATE_SRC="$tmp" OURFW_CANDIDATE_REL="$rel" "$OURFW/runtime/ourfw-apply.sh" "$tag"
+    rc=$?
+    rm -f "$tmp"
+    return $rc
 }

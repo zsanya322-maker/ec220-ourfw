@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply OURFW v0.4-audit-fixed to an exact hadzhioglu/padavan-ng checkout.
+"""Apply OURFW v0.5.0-one-shot to an exact hadzhioglu/padavan-ng checkout.
 
 Design goals:
 - do not modify board flash layout or radio data
@@ -131,6 +131,22 @@ ourfw_api_token_ok(const char *s)
 }
 
 static int
+ourfw_api_blob_ok(const char *s)
+{
+    const unsigned char *p = (const unsigned char *)s;
+    size_t n = 0;
+    if (!s || !*s) return 0;
+    while (*p) {
+        unsigned char c = *p;
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '-')) return 0;
+        if (++n > 1024) return 0;
+        ++p;
+    }
+    return 1;
+}
+
+static int
 ourfw_api_streq(const char *a, const char *b)
 {
     if (!a || !b) return 0;
@@ -175,7 +191,8 @@ do_ourfw_api(const char *url, FILE *stream)
     if (!action || !*action) action = "status";
     if (!p1) p1 = "";
     if (!p2) p2 = "";
-    if (!ourfw_api_token_ok(action) || !ourfw_api_token_ok(p1) || !ourfw_api_token_ok(p2)) {
+    if (!ourfw_api_token_ok(action) || !ourfw_api_token_ok(p1) ||
+        (ourfw_api_streq(action, "file-chunk") ? !ourfw_api_blob_ok(p2) : !ourfw_api_token_ok(p2))) {
         fputs("{\"ok\":false,\"error\":\"invalid request\"}\n", stream); return;
     }
     if (!ourfw_api_csrf_ok(action, csrf)) {
@@ -252,12 +269,13 @@ def main():
         set_kconfig(kernel, k, v)
     for k, v in [
         ("CONFIG_SHA256SUM", "y"),
+        ("CONFIG_BASE64", "y"),
         ("CONFIG_MOUNT", "y"),
         ("CONFIG_FEATURE_MOUNT_FLAGS", "y"),
     ]:
         set_kconfig(busy, k, v)
 
-    print("OURFW v0.4 integration applied successfully")
+    print("OURFW v0.5 integration applied successfully")
 
 
 if __name__ == "__main__":

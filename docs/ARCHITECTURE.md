@@ -1,61 +1,19 @@
-# Архитектура OURFW v0.4-audit-fixed
+# Архитектура OURFW v0.5
 
-## CORE — минимально неизменяемый
+## CORE
+Только то, что нужно для boot/network/recovery: Padavan kernel/MT7620, drivers, MTD, base network, Dropbear, httpd, firmware update, immutable loader + minimal authenticated OURFW API bridge.
 
-- Linux/MT7620, MTD/flash/filesystems.
-- Ethernet/switch и Wi-Fi drivers.
-- init/BusyBox/NVRAM и базовый network bring-up.
-- dnsmasq + необходимый netfilter/iptables/ipset.
-- Dropbear SSH.
-- штатный Padavan httpd + маленький фиксированный OURFW API bridge.
-- `mtd_storage.sh`.
-- immutable loader + fallback WebUI/defaults.
-- штатный механизм firmware update.
+## BUILTINS
+Бинарники и kernel modules, которые неразумно хранить в 128 KiB Storage: WG/AWG, nfqws/NFQUEUE, ipset/SFE/IPv6 netfilter, BusyBox helpers.
 
-CORE не содержит Smart Routing policy, VPN orchestration, nfqws presets, watchdog policy или основной OURFW UI.
+## OURFW mutable
+`/etc/storage/ourfw`: runtime controller, Smart Routing, VPN, DNS, nfqws, Watchdog, diagnostics, rules/profiles/configs, WebUI, backup and component updater.
 
-## BUILTINS — низкоуровневые/крупные компоненты
+### Update model
+- config section: stage -> validate -> candidate -> apply -> 90 s confirm/rollback;
+- module: SHA256 -> safe archive -> overlay -> health/apply -> 90 s confirm/rollback;
+- WebUI: same component updater with `type=webui`, bind-remount, rollback on no confirm;
+- full CORE/BUILTINS: normal firmware `.bin` update.
 
-Живут в SquashFS и меняются только полноценным firmware `.bin`:
-
-- WireGuard kernel module + `wg`.
-- AmneziaWG kernel module + `awg`.
-- `nfqws`.
-- SFE/netfilter/NFQUEUE kernel support.
-
-## OURFW — mutable
-
-`/etc/storage/ourfw`:
-
-- `runtime/` orchestration/updater/rollback/API dispatcher;
-- `config/` строгие key=value настройки;
-- `modules/` Smart Routing, VPN, nfqws, DNS, watchdog, diagnostics;
-- `profiles/`, `rules/`;
-- `www/` mutable WebUI;
-- runtime-created `history/`, `rollback/`.
-
-### UI
-
-SquashFS содержит fallback `/www/ourfw`. Loader делает bind mount mutable `/etc/storage/ourfw/www` на этот каталог. Если mount/OURFW сломан — остаётся базовый Padavan и встроенный fallback.
-
-### API
-
-`/ourfw_api.cgi` — маленький bridge внутри штатного Padavan httpd. Он валидирует короткие argv-токены и запускает **только** `/etc/storage/ourfw/runtime/ourfw-api.sh`. Сам dispatcher остаётся mutable. Arbitrary shell/API отсутствует.
-
-## Обновления
-
-### Конфиг
-
-last-good snapshot -> apply -> 90 sec pending -> confirm -> `mtd_storage.sh save`; без confirm — restore + reapply.
-
-### Компонент
-
-SHA256 -> archive validation -> staging -> backup -> install -> health-check -> 90 sec pending; только confirm сохраняет Storage. Иначе updater возвращает старую версию.
-
-### Полная firmware
-
-Нужна только для CORE/BUILTINS/kernel/rootfs изменений. После первой TFTP установки — обычный Padavan web `.bin`, если первая аппаратная проверка updater проходит.
-
-## IPv6 policy in v0.4-audit-fixed
-
-Smart Routing itself is IPv4-first. To avoid a silent AAAA/IPv6 bypass of VPN policy, default `IPV6_POLICY=block` installs an IPv6 forwarding guard while `smart`/`vpn-all` is active: LAN IPv6 cannot leave directly outside `wg0`. `IPV6_POLICY=native` explicitly opts back into native IPv6. Full selective IPv6 policy-routing is deferred until after first hardware validation.
+### Web security
+No generic shell endpoint. Padavan authentication remains in front of `/ourfw_api.cgi`; mutations require POST+per-boot CSRF. Payload chunks are base64url, bounded, SHA256-verified and target-whitelisted.

@@ -1,12 +1,7 @@
-# OURFW IPv6 policy (v0.4)
+# OURFW IPv6 policy v0.5
 
-`IPV6_POLICY=block` is a no-leak guard, not selective IPv6 policy routing yet.
-It activates only when `VPN_ENABLED=1` and a policy-routing mode is active.
-Both forwarded LAN traffic and router-originated global IPv6 are guarded at the
-head of the filter chains. Link-local, multicast/NDP, ULA and the cached IPv6
-VPN transport endpoint remain allowed.
+v0.5 is intentionally simple:
+- `block`: while policy VPN is enabled, global client/router IPv6 cannot silently bypass an IPv4-only VPN policy; link-local/ULA/multicast and the VPN transport endpoint are excepted where needed.
+- `native`: leave IPv6 to base Padavan.
 
-Padavan RA/DHCPv6 advertisement is intentionally not disabled in v0.4. Clients
-may retain IPv6 addresses while global direct forwarding is rejected. This keeps
-the mutable guard reversible without reconfiguring the base IPv6 service. Full
-selective IPv6 routing/RA coordination is a later OURFW module update.
+RA/DHCPv6 advertisement is not disabled in `block`; clients can retain IPv6 addressing while global forwarding is rejected. Selective IPv6 domain/IP policy routing is postponed until after the first hardware test.

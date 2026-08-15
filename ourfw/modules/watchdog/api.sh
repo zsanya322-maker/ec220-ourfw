@@ -6,8 +6,7 @@ case "$OP" in
   disable) value=0 ;;
   *) printf '{"ok":false,"error":"unsupported operation"}\n'; exit 2 ;;
 esac
-conf_set "/etc/storage/ourfw/config/watchdog.conf" "WATCHDOG_ENABLED" "$value" || { printf '{"ok":false,"error":"config update failed"}\n'; exit 3; }
-/etc/storage/ourfw/runtime/ourfwctl.sh apply web-watchdog >/tmp/ourfw-api-module.log 2>&1
+candidate_conf_set "/etc/storage/ourfw/config/watchdog.conf" "WATCHDOG_ENABLED" "$value" "web-watchdog" >/tmp/ourfw-api-module.log 2>&1
 rc=$?
 printf '{"ok":%s,"module":"watchdog","operation":"%s","pending":%s,"rc":%d}\n' "$([ $rc -eq 0 ] && echo true || echo false)" "$OP" "$([ $rc -eq 0 ] && echo true || echo false)" "$rc"
 exit $rc

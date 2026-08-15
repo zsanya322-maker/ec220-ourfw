@@ -34,7 +34,7 @@ def main():
         need(has(cfg,k,'y'), f'{k} not enabled', errors)
     for k in ['CONFIG_NETFILTER_NETLINK_QUEUE','CONFIG_NETFILTER_XT_TARGET_NFQUEUE','CONFIG_IP_NF_QUEUE']:
         need(has(kernel,k,'m'), f'{k} != m', errors)
-    for k in ['CONFIG_SHA256SUM','CONFIG_MOUNT','CONFIG_FEATURE_MOUNT_FLAGS']:
+    for k in ['CONFIG_SHA256SUM','CONFIG_BASE64','CONFIG_MOUNT','CONFIG_FEATURE_MOUNT_FLAGS']:
         need(has(busy,k,'y'), f'BusyBox {k} missing', errors)
     need('+= ourfw' in umk.read_text(errors='replace'), 'OURFW user Makefile entry missing', errors)
     auto=[]
@@ -49,6 +49,7 @@ def main():
     if api_hits:
         at=api_hits[0].read_text(errors='replace')
         need('ourfw_api_csrf_ok' in at and 'get_cgi("csrf")' in at, 'OURFW CSRF bridge missing', errors)
+        need('ourfw_api_blob_ok' in at and '1024' in at, 'OURFW chunk bridge missing', errors)
     need((ourfw/'files/ourfw-loader.sh').is_file(), 'immutable loader payload missing', errors)
     need((ourfw/'files/defaults.tar.bz2').is_file(), 'OURFW defaults archive missing', errors)
     need((ourfw/'files/www/index.asp').is_file(), 'immutable WebUI fallback missing', errors)

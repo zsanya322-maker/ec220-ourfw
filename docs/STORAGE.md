@@ -1,16 +1,9 @@
-# Storage strategy
+# OURFW Storage
 
-EC220 current target layout keeps:
-- Bootloader 0x000000..0x01ffff
-- Firmware   0x020000..0x79ffff
-- Storage    0x7a0000..0x7bffff (128 KiB)
-- Config     0x7c0000..0x7cffff
-- Romfile    0x7d0000..0x7dffff
-- Rom        0x7e0000..0x7effff
-- Factory    0x7f0000..0x7fffff
+EC220 Storage partition stays stock: 128 KiB (`0x20000`). We do not repartition flash.
 
-v0.4 keeps this exactly.
+Padavan stores `/etc/storage` compressed. OURFW defaults are generated deterministically with sorted paths, uid/gid 0 and fixed mtime; runtime `/tmp` data is excluded.
 
-Padavan mtd_storage packs `/etc/storage` to tar and compresses it using bzip2 -9 before writing. Therefore OURFW should favor highly compressible shell/JSON/text/HTML and avoid storing large already-compressed binaries.
+v0.5 mutable defaults are ~28 KiB compressed before user data. Large binaries remain in SquashFS BUILTINS; Storage is reserved for scripts/config/rules/UI.
 
-A future EC220-specific 256 KiB Storage layout may be researched by shrinking Firmware by 128 KiB while preserving 0x7c0000+ regions, but it is NOT enabled until image geometry, updater, bootloader and recovery are all verified. Generic `pt_ralink_8m_bigstor.config` is NOT drop-in compatible with EC220 because its partition map is different.
+Unconfirmed component/WebUI rollback copies live only in `/tmp/ourfw/update-history`; they are not written into the 128 KiB Storage. A reboot before confirmation naturally reloads the previous flash state.

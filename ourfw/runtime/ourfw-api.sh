@@ -7,6 +7,13 @@ ACTION=${1:-status}
 P1=${2:-}
 P2=${3:-}
 
+# Rescue switch is authoritative for mutable operations. Status remains readable
+# so the fallback page can explain why OURFW is inactive.
+if [ -e /etc/storage/ourfw.disabled ] && [ "$ACTION" != status ]; then
+    printf '%s\n' '{"ok":false,"error":"OURFW disabled by rescue flag"}' > /tmp/ourfw-api.json
+    exit 4
+fi
+
 write_json() { printf '%s\n' "$1" > "$OUT"; }
 run_ctl() {
     op="$1"
@@ -26,6 +33,44 @@ case "$ACTION" in
   diagnostics)
     f="$(/etc/storage/ourfw/modules/diagnostics/snapshot.sh 2>/dev/null | tail -n1)"
     [ -n "$f" ] && write_json "{\"ok\":true,\"file\":\"$(json_escape "$f")\"}" || write_json '{"ok":false,"error":"diagnostics failed"}'
+    ;;
+  file-get)
+    safe_id "$P1" || { write_json '{"ok":false,"error":"invalid target"}'; exit 2; }
+    "$OURFW/runtime/ourfw-transfer.sh" get "$P1" > "$OUT" 2>/tmp/ourfw-api-action.log
+    ;;
+  file-begin)
+    safe_id "$P1" || { write_json '{"ok":false,"error":"invalid target"}'; exit 2; }
+    "$OURFW/runtime/ourfw-transfer.sh" begin "$P1" "$P2" > "$OUT" 2>/tmp/ourfw-api-action.log
+    ;;
+  file-chunk)
+    safe_id "$P1" || { write_json '{"ok":false,"error":"invalid target"}'; exit 2; }
+    "$OURFW/runtime/ourfw-transfer.sh" chunk "$P1" "$P2" > "$OUT" 2>/tmp/ourfw-api-action.log
+    ;;
+  file-commit)
+    safe_id "$P1" || { write_json '{"ok":false,"error":"invalid target"}'; exit 2; }
+    "$OURFW/runtime/ourfw-transfer.sh" commit "$P1" > "$OUT" 2>/tmp/ourfw-api-action.log
+    ;;
+  file-stage)
+    safe_id "$P1" || { write_json '{"ok":false,"error":"invalid target"}'; exit 2; }
+    "$OURFW/runtime/ourfw-transfer.sh" stage "$P1" > "$OUT" 2>/tmp/ourfw-api-action.log
+    ;;
+  section-commit)
+    safe_id "$P1" || { write_json '{"ok":false,"error":"invalid section"}'; exit 2; }
+    "$OURFW/runtime/ourfw-transfer.sh" section-commit "$P1" > "$OUT" 2>/tmp/ourfw-api-action.log
+    ;;
+  section-abort)
+    safe_id "$P1" || { write_json '{"ok":false,"error":"invalid section"}'; exit 2; }
+    "$OURFW/runtime/ourfw-transfer.sh" section-abort "$P1" > "$OUT" 2>/tmp/ourfw-api-action.log
+    ;;
+  file-abort)
+    safe_id "$P1" || { write_json '{"ok":false,"error":"invalid target"}'; exit 2; }
+    "$OURFW/runtime/ourfw-transfer.sh" abort "$P1" > "$OUT" 2>/tmp/ourfw-api-action.log
+    ;;
+  backup-export)
+    "$OURFW/runtime/ourfw-transfer.sh" backup-export > "$OUT" 2>/tmp/ourfw-api-action.log
+    ;;
+  diagnostics-export)
+    "$OURFW/runtime/ourfw-transfer.sh" diagnostics-export > "$OUT" 2>/tmp/ourfw-api-action.log
     ;;
   module)
     # p1=module id, p2=operation. Mutable extension point without arbitrary shell.

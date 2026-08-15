@@ -8,9 +8,12 @@ done
 find "$ROOT/ci" -type f -name '*.sh' | while IFS= read -r f; do
   bash -n "$f" || exit 20
 done
-python3 -m py_compile "$ROOT/tools/apply-to-padavan.py" "$ROOT/tools/verify-padavan-tree.py" "$ROOT/tools/inspect-images.py" "$ROOT/tests/integration-mock.py" "$ROOT/tests/reference-recovery.py" "$ROOT/tests/audit-regressions.py"
+python3 -m py_compile "$ROOT/tools/apply-to-padavan.py" "$ROOT/tools/verify-padavan-tree.py" "$ROOT/tools/inspect-images.py" "$ROOT/ci/verify-built-image.py" "$ROOT/tests/integration-mock.py" "$ROOT/tests/reference-recovery.py" "$ROOT/tests/audit-regressions.py" "$ROOT/tests/v050-regressions.py"
 python3 "$ROOT/tests/integration-mock.py"
 python3 "$ROOT/tests/audit-regressions.py"
+python3 "$ROOT/tests/v050-regressions.py"
+sh "$ROOT/tests/romfs-verifier-mock.sh"
+bash "$ROOT/tests/runtime-mock.sh"
 sh "$ROOT/build/make-defaults.sh" >/dev/null
 sh "$ROOT/tools/storage-budget.sh"
 
@@ -48,7 +51,7 @@ grep -q 'PADAVAN_COMMIT="0e6caa2749a8814345c8a0d496a2fde2e6746a7d"' "$ROOT/varia
   echo 'Padavan commit is not pinned' >&2; exit 28;
 }
 
-# No accidental heavy packages in the v0.4 firmware config.
+# No accidental heavy packages in the v0.5 firmware config.
 for k in CONFIG_FIRMWARE_INCLUDE_OPENVPN CONFIG_FIRMWARE_INCLUDE_SSWAN CONFIG_FIRMWARE_INCLUDE_HTTPS CONFIG_FIRMWARE_INCLUDE_SFTP CONFIG_FIRMWARE_INCLUDE_DNSCRYPT CONFIG_FIRMWARE_INCLUDE_STUBBY CONFIG_FIRMWARE_INCLUDE_DOH CONFIG_FIRMWARE_INCLUDE_ZRAM CONFIG_FIRMWARE_INCLUDE_LUA; do
   if grep -q "^${k}=y$" "$ROOT/build.config"; then echo "heavy feature unexpectedly enabled: $k" >&2; exit 29; fi
 done
@@ -78,5 +81,18 @@ grep -q 'mkdir -p $(ROMFSDIR)/usr/share/ourfw' "$ROOT/integration/padavan-user-o
 grep -q 'Verify built ROMFS' "$ROOT/.github/workflows/build-ourfw.yml" || {
   echo 'workflow does not verify built ROMFS' >&2; exit 36;
 }
+
+# v0.5 one-shot WebUI / transfer layer.
+grep -q 'CONFIG_BASE64' "$ROOT/tools/apply-to-padavan.py" || { echo 'BusyBox base64 is not enabled' >&2; exit 37; }
+for f in "$ROOT/ourfw/runtime/ourfw-transfer.sh" "$ROOT/ourfw/runtime/ourfw-backup.sh" "$ROOT/ourfw/runtime/ourfw-ui.sh"; do [ -f "$f" ] || { echo "missing runtime source $f" >&2; exit 38; }; done
+grep -q "find.*-name '\*.sh'.*chmod 0755" "$ROOT/bootstrap/ourfw-loader.sh" || { echo 'loader does not normalize mutable script permissions' >&2; exit 38; }
+grep -q 'ourfw_api_blob_ok' "$ROOT/tools/apply-to-padavan.py" || { echo 'chunk-safe immutable bridge missing' >&2; exit 39; }
+grep -q 'section-commit' "$ROOT/ourfw/runtime/ourfw-transfer.sh" || { echo 'atomic WebUI section commit missing' >&2; exit 40; }
+grep -q 'OURFW_CANDIDATE_PATCH' "$ROOT/ourfw/runtime/ourfw-apply.sh" || { echo 'candidate patch transaction missing' >&2; exit 41; }
+grep -q 'romfs_exists' "$ROOT/ci/verify-built-romfs.sh" && grep -q 'readlink' "$ROOT/ci/verify-built-romfs.sh" || { echo 'ROMFS verifier is not symlink-aware' >&2; exit 42; }
+for token in 'Backup Center' 'vpn-profile' 'nfqws-strategy' 'dns-servers' 'watchdog-config' 'component-package' 'diagnostics-export'; do
+  grep -R -q "$token" "$ROOT/ourfw/www" "$ROOT/ourfw/runtime" || { echo "WebUI feature missing: $token" >&2; exit 43; }
+done
+if command -v node >/dev/null 2>&1; then node --check "$ROOT/ourfw/www/assets/ourfw.js"; fi
 
 echo 'STATIC CHECKS: OK'
