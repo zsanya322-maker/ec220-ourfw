@@ -38,7 +38,11 @@ grep -qx 'SUBSCRIPTION_REFRESH=manual' "$tmp/config/subscription.conf" || fail '
 if grep -Ev '^[[:space:]]*(#|$)' "$tmp/profiles/subscription.secret" | grep -q .; then
   fail 'immutable payload unexpectedly contains a provider URL/secret'
 fi
-if grep -Eq 'fetch\.sh|refresh' "$tmp/modules/subscription/start.sh"; then
+
+# Inspect executable shell lines only. Comments deliberately document forbidden
+# operations (fetch/refresh), so scanning raw text would create a false positive.
+start_code=$(grep -Ev '^[[:space:]]*(#|$)' "$tmp/modules/subscription/start.sh" || true)
+if printf '%s\n' "$start_code" | grep -Eq 'fetch\.sh|(^|[[:space:]/])(curl|wget)([[:space:]]|$)|(^|[^A-Za-z0-9_])refresh([^A-Za-z0-9_]|$)'; then
   fail 'subscription boot hook performs refresh/network work'
 fi
 
