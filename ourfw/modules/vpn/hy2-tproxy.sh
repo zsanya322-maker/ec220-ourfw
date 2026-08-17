@@ -1,6 +1,6 @@
 #!/bin/sh
 # Experimental OURFW v0.7 Hysteria2 data plane for EC220-G5 v2.
-# No action is taken at boot.  The caller must explicitly prepare/start/arm it.
+# No action is taken at boot. The caller must explicitly prepare/start/arm it.
 set -u
 
 COMMON=${OURFW_COMMON_OVERRIDE:-/etc/storage/ourfw/runtime/ourfw-common.sh}
@@ -19,6 +19,7 @@ HY2_VPN_IPSET=${HY2_VPN_IPSET:-ourfw_vpn4}
 HY2_DIRECT_IPSET=${HY2_DIRECT_IPSET:-ourfw_direct4}
 HY2_MODULE_DIR=${HY2_MODULE_DIR:-$OURFW/modules/vpn/tproxy-modules}
 HY2_RUNTIME=${HY2_RUNTIME:-$STATE/hy2}
+HY2_ALLOW_LEGACY_VPN=${HY2_ALLOW_LEGACY_VPN:-0}
 HY2_ENGINE="$HY2_RUNTIME/ec220-hy2-tproxy"
 HY2_ENGINE_PID="$HY2_RUNTIME/engine.pid"
 HY2_ENGINE_LOG="$HY2_RUNTIME/engine.log"
@@ -151,6 +152,9 @@ ipt_del_jump() {
 }
 
 route_cleanup_no_guard() {
+    # The jump is intentionally generic and the first chain rule limits it to
+    # the LAN interface. This makes creation and deletion byte-for-byte
+    # symmetric, so rollback cannot leave a stale PREROUTING reference.
     ipt_del_jump -t mangle -D PREROUTING -j "$HY2_CHAIN"
     iptables -t mangle -F "$HY2_CHAIN" >/dev/null 2>&1 || true
     iptables -t mangle -X "$HY2_CHAIN" >/dev/null 2>&1 || true
@@ -182,6 +186,14 @@ make_token() {
     dd if=/dev/urandom bs=24 count=1 2>/dev/null | sha256sum | awk '{print substr($1,1,24)}'
 }
 
+legacy_vpn_active() {
+    [ "$HY2_ALLOW_LEGACY_VPN" = 1 ] && return 1
+    [ -s "$STATE/vpn-interface" ] || return 1
+    iface="$(cat "$STATE/vpn-interface" 2>/dev/null || true)"
+    case "$iface" in ''|*[!A-Za-z0-9_.:-]*) return 1;; esac
+    ip link show dev "$iface" >/dev/null 2>&1
+}
+
 route_arm() {
     mode="$1"
     case "$mode" in smart|vpn-all) ;; *) echo "mode must be smart or vpn-all" >&2; return 2;; esac
@@ -190,6 +202,10 @@ route_arm() {
     need iptables || return 4
     need ip || return 4
     [ "$mode" != smart ] || need ipset || return 4
+    if legacy_vpn_active; then
+        echo "legacy OURFW VPN interface is active; disable it before arming Hysteria TPROXY" >&2
+        return 4
+    fi
 
     lan="$(lan_if 2>/dev/null || true)"
     case "$lan" in ''|*[!A-Za-z0-9_.:-]*) echo "cannot determine LAN interface" >&2; return 4;; esac
@@ -198,7 +214,8 @@ route_arm() {
     ip rule add fwmark "$HY2_MARK/$HY2_MASK" table "$HY2_TABLE" pref "$HY2_RULE_PREF" >/dev/null 2>&1 || { route_fail "ip rule"; return 5; }
     ip route add local 0.0.0.0/0 dev lo table "$HY2_TABLE" >/dev/null 2>&1 || { route_fail "local policy route"; return 5; }
     iptables -t mangle -N "$HY2_CHAIN" >/dev/null 2>&1 || { route_fail "mangle chain"; return 5; }
-    iptables -t mangle -I PREROUTING 1 -i "$lan" -j "$HY2_CHAIN" >/dev/null 2>&1 || { route_fail "PREROUTING jump"; return 5; }
+    iptables -t mangle -I PREROUTING 1 -j "$HY2_CHAIN" >/dev/null 2>&1 || { route_fail "PREROUTING jump"; return 5; }
+    iptables -t mangle -A "$HY2_CHAIN" ! -i "$lan" -j RETURN >/dev/null 2>&1 || { route_fail "LAN scope"; return 5; }
 
     for n in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 240.0.0.0/4; do
         iptables -t mangle -A "$HY2_CHAIN" -d "$n" -j RETURN >/dev/null 2>&1 || { route_fail "private exclusion"; return 5; }
