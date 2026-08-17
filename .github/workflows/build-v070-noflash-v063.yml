@@ -65,8 +65,8 @@ jobs:
           old='ver="$(cat "$OURFW/VERSION" 2>/dev/null || echo dev)"'
           new='ver="$(cat "$OURFW/VERSION.overlay" 2>/dev/null || cat "$OURFW/VERSION" 2>/dev/null || echo dev)"'
           n=s.count(old)
-          if n != 2:
-              raise SystemExit(f'expected 2 status version reads, got {n}')
+          if n != 1:
+              raise SystemExit(f'expected 1 status version read, got {n}')
           p.write_text(s.replace(old,new))
           PY
 
