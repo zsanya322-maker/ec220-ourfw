@@ -97,6 +97,25 @@ jobs:
         run: |
           ./ci/prepare-artifacts.sh padavan-ng dist
 
+      - name: Export TPROXY hotfix modules
+        if: github.ref_name == 'agent/v0.7b-tproxy-hy2'
+        run: |
+          set -euo pipefail
+          out=dist/tproxy-modules
+          mkdir -p "$out"
+          : > "$out/MODULES.txt"
+          for name in nf_tproxy_core.ko xt_TPROXY.ko xt_socket.ko; do
+            src=$(find padavan-ng/trunk/romfs/lib/modules -type f -name "$name" -print -quit)
+            test -n "$src" && test -s "$src"
+            cp "$src" "$out/$name"
+            printf '%s BYTES=%s SOURCE=%s\n' "$name" "$(stat -c %s "$src")" "${src#padavan-ng/trunk/romfs/}" >> "$out/MODULES.txt"
+          done
+          printf 'PADAVAN_COMMIT=%s\n' "$PADAVAN_COMMIT" >> "$out/MODULES.txt"
+          printf 'KERNEL_LINE=3.4.113\n' >> "$out/MODULES.txt"
+          (cd "$out" && sha256sum nf_tproxy_core.ko xt_TPROXY.ko xt_socket.ko > SHA256SUMS.txt)
+          cat "$out/MODULES.txt"
+          cat "$out/SHA256SUMS.txt"
+
       - name: Verify final firmware image
         run: |
           fw=$(find dist -maxdepth 1 -type f -name "TL_EC220_G5-V2_OURFW-${OURFW_VERSION}-*.bin" -print -quit)
