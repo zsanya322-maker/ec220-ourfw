@@ -158,14 +158,39 @@ for f in "$BASE"/runtime/*.sh "$BASE"/modules/*/*.sh; do
 done
 if [ "$bad" -ne 0 ]; then restore_backup >/dev/null 2>&1 || true; fail 'live shell preflight failed; restored previous tree'; fi
 
-# Passive initialization only. It creates protected subscription state and does
-# not fetch a subscription, start Hysteria, or touch routing/firewall/DNS.
+# Pre-create/repair the local subscription salt without saving Storage yet.
+# subscription_ensure_salt() normally persists a newly created salt itself; doing
+# that here would bypass the installer's single final MTD transaction gate. A
+# valid salt makes the passive initialization below strictly RAM/filesystem-only,
+# and the one final mtd_storage save then persists code + salt atomically.
+SUB_SALT="$BASE/profiles/subscription.salt"
+salt="$(sed -n '1p' "$SUB_SALT" 2>/dev/null | tr -d '\r\n' || true)"
+case "$salt" in *[!0-9A-Fa-f]*) salt="";; esac
+if [ "${#salt}" -ne 64 ] 2>/dev/null; then
+    sum=/usr/bin/sha256sum
+    [ -x "$sum" ] || sum=/bin/sha256sum
+    [ -x "$sum" ] || { restore_backup >/dev/null 2>&1 || true; fail 'sha256sum unavailable for subscription salt'; }
+    salt_tmp="$SUB_SALT.tmp.$$"
+    ( umask 077; dd if=/dev/urandom bs=32 count=1 2>/dev/null | "$sum" 2>/dev/null | awk '{print $1}' > "$salt_tmp" ) || {
+        rm -f "$salt_tmp"; restore_backup >/dev/null 2>&1 || true; fail 'subscription salt generation failed';
+    }
+    salt="$(sed -n '1p' "$salt_tmp" 2>/dev/null | tr -d '\r\n')"
+    case "$salt" in *[!0-9A-Fa-f]*) salt="";; esac
+    [ "${#salt}" -eq 64 ] 2>/dev/null || { rm -f "$salt_tmp"; restore_backup >/dev/null 2>&1 || true; fail 'generated subscription salt invalid'; }
+    chmod 0600 "$salt_tmp" 2>/dev/null || true
+    mv "$salt_tmp" "$SUB_SALT" || { restore_backup >/dev/null 2>&1 || true; fail 'cannot install subscription salt'; }
+fi
+chmod 0600 "$SUB_SALT" 2>/dev/null || true
+
+# Passive initialization only. Because a valid salt now exists, this step does
+# not call mtd_storage.sh. It does not fetch a subscription, start Hysteria, or
+# touch routing/firewall/DNS.
 "$BASE/modules/subscription/start.sh" boot >/tmp/ourfw-v070-noflash-subscription-init.log 2>&1 || {
     restore_backup >/dev/null 2>&1 || true
     fail 'passive subscription initialization failed; restored previous tree'
 }
 
-# Storage write is the final gate. If it refuses the larger mutable tree, put the
+# Storage write is the single final gate. If it refuses the larger mutable tree, put the
 # exact pre-install tree back and persist that instead.
 if [ -x /sbin/mtd_storage.sh ]; then SAVE=/sbin/mtd_storage.sh; else SAVE=mtd_storage.sh; fi
 if ! "$SAVE" save; then
