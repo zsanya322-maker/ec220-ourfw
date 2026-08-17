@@ -88,13 +88,13 @@ jobs:
           : > EC220-HY2-SMOKE.txt
           for f in ec220-hy2-tproxy-plain ec220-hy2-tproxy-salamander; do
             qemu-mipsel "./$f" -h > "$f.smoke.txt" 2>&1
-            grep -q -- '--server' "$f.smoke.txt"
-            grep -q -- '--auth' "$f.smoke.txt"
-            grep -q -- '--listen' "$f.smoke.txt"
-            grep -q -- '--udp-timeout' "$f.smoke.txt"
+            grep -q -- '-server' "$f.smoke.txt"
+            grep -q -- '-auth' "$f.smoke.txt"
+            grep -q -- '-listen' "$f.smoke.txt"
+            grep -q -- '-udp-timeout' "$f.smoke.txt"
             printf '%s QEMU_STARTUP_HELP=OK\n' "$f" | tee -a EC220-HY2-SMOKE.txt
           done
-          grep -q -- '--obfs-password' ec220-hy2-tproxy-salamander.smoke.txt
+          grep -q -- '-obfs-password' ec220-hy2-tproxy-salamander.smoke.txt
           echo 'PASSIVE_RUNTIME_SELFTEST=OK' | tee -a EC220-HY2-SMOKE.txt
 
       - name: Package transient runtime payloads
