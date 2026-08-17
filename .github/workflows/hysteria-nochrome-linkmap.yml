@@ -1,0 +1,90 @@
+name: Attribute EC220 Hysteria2 no-Chrome Footprint
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v0.7b-tproxy-hy2
+    paths:
+      - '.github/workflows/hysteria-nochrome-linkmap.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    env:
+      HY_COMMIT: 14e9fff1d972ab0187ac7fcf75b9514dc8664065
+      QUIC_COMMIT: 184d081eef3e9edd5cb7c0ddf2460c91f2e6adb1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.1'
+          cache: false
+      - name: Prepare exact patched sources
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/apernet/hysteria.git hysteria-src
+          git -C hysteria-src checkout --detach "$HY_COMMIT"
+          git clone --filter=blob:none https://github.com/apernet/quic-go.git quic-go-ec220
+          git -C quic-go-ec220 checkout --detach "$QUIC_COMMIT"
+          mkdir -p hysteria-src/app/ec220_tproxy
+          cp research/hysteria/ec220_tproxy/*.go hysteria-src/app/ec220_tproxy/
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('hysteria-src/core/client/client.go'); s=p.read_text()
+          s=s.replace('ChromeParrot:                   !c.config.QUICConfig.DisableChromeParrot,','ChromeParrot:                   false,')
+          a=s.index('\tif !c.config.QUICConfig.DisableChromeParrot {')
+          b=s.index('\t}\n',a)+3
+          s=s[:a]+s[b:]; p.write_text(s)
+          p=Path('quic-go-ec220/internal/handshake/crypto_setup.go'); s=p.read_text()
+          s=s.replace('cs.allow0RTT = enable0RTT && !chromeParrot','cs.allow0RTT = enable0RTT')
+          old='''\tif chromeParrot {\n\t\tconn, err := newUTLSQUICClient(tlsConf)\n\t\tif err != nil {\n\t\t\treturn nil, err\n\t\t}\n\t\tcs.conn = conn\n\t} else {\n\t\tcs.conn = tls.QUICClient(&tls.QUICConfig{\n\t\t\tTLSConfig:           tlsConf,\n\t\t\tEnableSessionEvents: true,\n\t\t})\n\t}\n'''
+          new='''\tcs.conn = tls.QUICClient(&tls.QUICConfig{\n\t\tTLSConfig:           tlsConf,\n\t\tEnableSessionEvents: true,\n\t})\n'''
+          if old not in s: raise SystemExit('uTLS branch not found')
+          p.write_text(s.replace(old,new))
+          Path('quic-go-ec220/internal/handshake/tls_conn_utls.go').unlink()
+          Path('quic-go-ec220/internal/handshake/chrome_client_hello.go').unlink()
+          PY
+          (cd hysteria-src && go work edit -replace github.com/apernet/quic-go=../quic-go-ec220)
+      - name: Build symbols and collect package attribution
+        run: |
+          set -euo pipefail
+          export GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0 GOFIPS140=off
+          (cd hysteria-src && go build -trimpath -gcflags=all=-l -ldflags '-buildid=' -o ../hy2-symbols ./app/ec220_tproxy)
+          go tool nm -size -sort size hy2-symbols | tail -n 1000 > TOP-SYMBOLS-1000.txt
+          python3 - <<'PY'
+          import subprocess,re,collections
+          out=subprocess.check_output(['go','tool','nm','-size','hy2-symbols'],text=True,errors='replace')
+          sums=collections.Counter()
+          for line in out.splitlines():
+              p=line.split(None,3)
+              if len(p)<4: continue
+              try: n=int(p[1])
+              except: continue
+              name=p[3]
+              if name.startswith(('go:','type:','runtime.','runtime/')):
+                  pkg='runtime/meta'
+              elif '/' in name:
+                  # retain module path up through package, drop symbol suffix heuristically
+                  m=re.match(r'(.+?/[A-Za-z0-9_]+)(?:\.|\(|$)',name)
+                  pkg=m.group(1) if m else name.split('.')[0]
+              else:
+                  pkg=name.split('.')[0]
+              sums[pkg]+=n
+          with open('PACKAGE-SIZE.txt','w') as f:
+              for pkg,n in sums.most_common(250): f.write(f'{n:12d} {pkg}\n')
+          PY
+          (cd hysteria-src && GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0 go list -deps ./app/ec220_tproxy) > DEPS.txt
+          grep -E '^(net/http|github.com/apernet/quic-go/http3|github.com/quic-go/qpack|golang.org/x/net/http2/hpack|crypto/|github.com/apernet/quic-go)' DEPS.txt > HEAVY-DEPS.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EC220-v0.7b-Hysteria2-nochrome-linkmap
+          retention-days: 14
+          path: |
+            PACKAGE-SIZE.txt
+            TOP-SYMBOLS-1000.txt
+            DEPS.txt
+            HEAVY-DEPS.txt

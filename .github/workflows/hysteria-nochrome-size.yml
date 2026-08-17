@@ -1,0 +1,144 @@
+name: Build EC220 Hysteria2 without Chrome Parrot
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v0.7b-tproxy-hy2
+    paths:
+      - '.github/workflows/hysteria-nochrome-size.yml'
+      - 'research/hysteria/ec220_tproxy/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HY_COMMIT: 14e9fff1d972ab0187ac7fcf75b9514dc8664065
+      QUIC_COMMIT: 184d081eef3e9edd5cb7c0ddf2460c91f2e6adb1
+      HEADROOM: '1441788'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.1'
+          cache: false
+
+      - name: Install SquashFS tools
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends squashfs-tools
+
+      - name: Checkout exact Hysteria2 and quic-go sources
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/apernet/hysteria.git hysteria-src
+          git -C hysteria-src checkout --detach "$HY_COMMIT"
+          test "$(git -C hysteria-src rev-parse HEAD)" = "$HY_COMMIT"
+          git clone --filter=blob:none https://github.com/apernet/quic-go.git quic-go-ec220
+          git -C quic-go-ec220 checkout --detach "$QUIC_COMMIT"
+          test "$(git -C quic-go-ec220 rev-parse HEAD)" = "$QUIC_COMMIT"
+          mkdir -p hysteria-src/app/ec220_tproxy
+          cp research/hysteria/ec220_tproxy/*.go hysteria-src/app/ec220_tproxy/
+
+      - name: Patch EC220 client to standard crypto/tls only
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # Hysteria EC220 client: hard-disable Chrome Parrot. It is an optional
+          # fingerprinting feature, not part of the Hysteria2 wire protocol.
+          p = Path('hysteria-src/core/client/client.go')
+          s = p.read_text()
+          s = s.replace('ChromeParrot:                   !c.config.QUICConfig.DisableChromeParrot,',
+                        'ChromeParrot:                   false,')
+          old = '''\tif !c.config.QUICConfig.DisableChromeParrot {\n\t\t// Chrome uses a zero-length source connection ID. This has to be set on the\n\t\t// Transport, since it fixes the length at which incoming packets\' connection\n\t\t// IDs are parsed; leaving it default yields 4-byte IDs, visible on the wire.\n\t\ttr.ConnectionIDGenerator = quic.ZeroLengthConnectionIDGenerator{}\n\t}\n'''
+          if old not in s:
+              raise SystemExit('Hysteria Chrome transport block not found')
+          s = s.replace(old, '')
+          p.write_text(s)
+
+          # quic-go: remove the optional uTLS-backed ClientHello implementation
+          # and make NewCryptoSetupClient unconditionally use crypto/tls.
+          p = Path('quic-go-ec220/internal/handshake/crypto_setup.go')
+          s = p.read_text()
+          s = s.replace('cs.allow0RTT = enable0RTT && !chromeParrot',
+                        'cs.allow0RTT = enable0RTT')
+          old = '''\tif chromeParrot {\n\t\tconn, err := newUTLSQUICClient(tlsConf)\n\t\tif err != nil {\n\t\t\treturn nil, err\n\t\t}\n\t\tcs.conn = conn\n\t} else {\n\t\tcs.conn = tls.QUICClient(&tls.QUICConfig{\n\t\t\tTLSConfig:           tlsConf,\n\t\t\tEnableSessionEvents: true,\n\t\t})\n\t}\n'''
+          new = '''\tcs.conn = tls.QUICClient(&tls.QUICConfig{\n\t\tTLSConfig:           tlsConf,\n\t\tEnableSessionEvents: true,\n\t})\n'''
+          if old not in s:
+              raise SystemExit('quic-go uTLS branch not found')
+          s = s.replace(old, new)
+          p.write_text(s)
+
+          Path('quic-go-ec220/internal/handshake/tls_conn_utls.go').unlink()
+          Path('quic-go-ec220/internal/handshake/chrome_client_hello.go').unlink()
+          PY
+
+          # The patched quic-go tree must no longer import uTLS at all.
+          if grep -R -n --include='*.go' 'refraction-networking/utls' quic-go-ec220; then
+            echo 'uTLS import remained in patched quic-go tree' >&2
+            exit 31
+          fi
+
+          cd hysteria-src
+          go work edit -replace github.com/apernet/quic-go=../quic-go-ec220
+          go work edit -json > ../GO-WORK.json
+          cd ..
+
+      - name: Test patched native crypto/tls QUIC path
+        run: |
+          set -euo pipefail
+          # Host-side tests catch interface/handshake regressions before cross compile.
+          (cd quic-go-ec220 && go test ./internal/handshake ./internal/wire)
+          (cd hysteria-src/core && go test ./client)
+
+      - name: Build and measure EC220 variants
+        run: |
+          set -euo pipefail
+          export GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0 GOFIPS140=off
+          : > NOCHROME-SIZE.txt
+          build_one() {
+            name="$1"; shift
+            (cd hysteria-src && go build -trimpath -ldflags '-s -w -buildid=' "$@" -o "../hy2-$name" ./app/ec220_tproxy)
+            rm -rf "root-$name"
+            mkdir -p "root-$name/usr/bin"
+            cp "hy2-$name" "root-$name/usr/bin/hysteria"
+            mksquashfs "root-$name" "hy2-$name.sqfs" -comp xz -b 131072 -all-root -no-exports -noappend -nopad -noI -no-xattrs >/dev/null
+            raw=$(stat -c %s "hy2-$name")
+            sq=$(stat -c %s "hy2-$name.sqfs")
+            if [ "$sq" -le "$HEADROOM" ]; then fit=YES; else fit=NO; fi
+            printf '%s RAW_BYTES=%s SQUASHFS_XZ_BYTES=%s FIT=%s\n' "$name" "$raw" "$sq" "$fit" | tee -a NOCHROME-SIZE.txt
+            go version -m "hy2-$name" > "GO-BUILD-$name.txt"
+            if grep -Eq 'refraction-networking/utls|andybalholm/brotli|klauspost/compress' "GO-BUILD-$name.txt"; then
+              echo "heavy Chrome-only dependency still linked in $name" >&2
+              grep -E 'refraction-networking/utls|andybalholm/brotli|klauspost/compress' "GO-BUILD-$name.txt" >&2 || true
+              exit 32
+            fi
+          }
+          build_one baseline
+          build_one noinline -gcflags=all=-l
+
+      - name: Report projected firmware fit
+        run: |
+          set -euo pipefail
+          {
+            echo "HEADROOM_BYTES=$HEADROOM"
+            echo 'PATCH=standard-crypto-tls-only; chrome-parrot-and-utls-removed'
+            echo 'UPSTREAM_HYSTERIA_COMMIT='$HY_COMMIT
+            echo 'UPSTREAM_QUIC_COMMIT='$QUIC_COMMIT
+          } >> NOCHROME-SIZE.txt
+          cat NOCHROME-SIZE.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EC220-v0.7b-Hysteria2-nochrome
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            NOCHROME-SIZE.txt
+            GO-WORK.json
+            GO-BUILD-*.txt

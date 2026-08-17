@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - agent/v0.7-subscription-manager
+      - agent/v0.7b-tproxy-hy2
     tags:
       - 'ourfw-v*'
 
@@ -30,7 +31,8 @@ jobs:
           sh ./tests/static-check.sh
           sh ./tests/v064-hardware-regressions.sh
           sh ./tests/v070-subscription-manager.sh
-          python3 -m py_compile tools/harden-https-defaults.py tests/https-hardening-mock.py ci/verify-https-security.py
+          sh ./tests/v070-subscription-webui.sh
+          python3 -m py_compile tools/harden-https-defaults.py tests/https-hardening-mock.py ci/verify-https-security.py tools/enable-tproxy.py
           python3 ./tests/https-hardening-mock.py
 
       - name: Load pinned variables
@@ -67,6 +69,9 @@ jobs:
         run: |
           cp build.config padavan-ng/trunk/.config
           python3 tools/apply-to-padavan.py padavan-ng
+          if [ "$GITHUB_REF_NAME" = "agent/v0.7b-tproxy-hy2" ]; then
+            python3 tools/enable-tproxy.py padavan-ng/trunk
+          fi
           python3 tools/harden-https-defaults.py padavan-ng
           python3 tools/verify-padavan-tree.py padavan-ng
 
@@ -85,10 +90,32 @@ jobs:
         run: |
           ./ci/verify-built-romfs.sh padavan-ng build.log ROMFS-VERIFY.txt
           ./ci/verify-subscription-romfs.sh padavan-ng SUBSCRIPTION-ROMFS-VERIFY.txt
+          if [ "$GITHUB_REF_NAME" = "agent/v0.7b-tproxy-hy2" ]; then
+            ./ci/verify-tproxy-romfs.sh padavan-ng TPROXY-ROMFS-VERIFY.txt
+          fi
 
       - name: Validate and prepare artifacts
         run: |
           ./ci/prepare-artifacts.sh padavan-ng dist
+
+      - name: Export TPROXY hotfix modules
+        if: github.ref_name == 'agent/v0.7b-tproxy-hy2'
+        run: |
+          set -euo pipefail
+          out=dist/tproxy-modules
+          mkdir -p "$out"
+          : > "$out/MODULES.txt"
+          for name in nf_tproxy_core.ko xt_TPROXY.ko xt_socket.ko; do
+            src=$(find padavan-ng/trunk/romfs/lib/modules -type f -name "$name" -print -quit)
+            test -n "$src" && test -s "$src"
+            cp "$src" "$out/$name"
+            printf '%s BYTES=%s SOURCE=%s\n' "$name" "$(stat -c %s "$src")" "${src#padavan-ng/trunk/romfs/}" >> "$out/MODULES.txt"
+          done
+          printf 'PADAVAN_COMMIT=%s\n' "$PADAVAN_COMMIT" >> "$out/MODULES.txt"
+          printf 'KERNEL_LINE=3.4.113\n' >> "$out/MODULES.txt"
+          (cd "$out" && sha256sum nf_tproxy_core.ko xt_TPROXY.ko xt_socket.ko > SHA256SUMS.txt)
+          cat "$out/MODULES.txt"
+          cat "$out/SHA256SUMS.txt"
 
       - name: Verify final firmware image
         run: |
@@ -101,7 +128,7 @@ jobs:
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-          name: EC220-G5-v2-OURFW-${{ env.OURFW_VERSION }}
+          name: EC220-G5-v2-OURFW-${{ env.OURFW_VERSION }}-${{ github.ref_name == 'agent/v0.7b-tproxy-hy2' && 'TPROXY' || 'BASE' }}
           retention-days: 14
           if-no-files-found: error
           path: |
@@ -112,6 +139,7 @@ jobs:
             MODULE-EXPORTS.txt
             ROMFS-VERIFY.txt
             SUBSCRIPTION-ROMFS-VERIFY.txt
+            TPROXY-ROMFS-VERIFY.txt
             IMAGE-VERIFY.txt
             PAYLOAD-VERIFY.txt
             HTTPS-VERIFY.txt
@@ -130,6 +158,7 @@ jobs:
             MODULE-EXPORTS.txt
             ROMFS-VERIFY.txt
             SUBSCRIPTION-ROMFS-VERIFY.txt
+            TPROXY-ROMFS-VERIFY.txt
             IMAGE-VERIFY.txt
             PAYLOAD-VERIFY.txt
             HTTPS-VERIFY.txt

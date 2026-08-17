@@ -1,0 +1,53 @@
+name: Compare EC220 Hysteria2 Go Toolchain Size
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v0.7b-tproxy-hy2
+    paths:
+      - '.github/workflows/hysteria-go-version-size.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.25.1', '1.26.5']
+    env:
+      HY_COMMIT: 14e9fff1d972ab0187ac7fcf75b9514dc8664065
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: false
+      - name: Checkout exact Hysteria2 source
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/apernet/hysteria.git hysteria-src
+          git -C hysteria-src checkout --detach "$HY_COMMIT"
+          mkdir -p hysteria-src/app/ec220_tproxy
+          cp research/hysteria/ec220_tproxy/*.go hysteria-src/app/ec220_tproxy/
+      - name: Build exact minimal client
+        run: |
+          set -euo pipefail
+          cd hysteria-src
+          export GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0 GOFIPS140=off
+          go version
+          go build -trimpath -ldflags '-s -w -buildid=' -o ../ec220-hy2 ./app/ec220_tproxy
+          cd ..
+          {
+            echo "GO_VERSION=$(go version)"
+            echo "RAW_BYTES=$(stat -c %s ec220-hy2)"
+            sha256sum ec220-hy2
+          } | tee GO-SIZE-${{ matrix.go }}.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EC220-hy2-go-${{ matrix.go }}
+          retention-days: 14
+          path: GO-SIZE-${{ matrix.go }}.txt

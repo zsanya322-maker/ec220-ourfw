@@ -1,0 +1,95 @@
+name: Attribute Minimal EC220 Hysteria2 Footprint
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v0.7b-tproxy-hy2
+    paths:
+      - '.github/workflows/hysteria-linkmap-research.yml'
+      - 'research/hysteria/ec220_tproxy/**'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    env:
+      HY_COMMIT: 14e9fff1d972ab0187ac7fcf75b9514dc8664065
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: false
+
+      - name: Checkout exact Hysteria2 source
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/apernet/hysteria.git hysteria-src
+          git -C hysteria-src checkout --detach "$HY_COMMIT"
+          test "$(git -C hysteria-src rev-parse HEAD)" = "$HY_COMMIT"
+          mkdir -p hysteria-src/app/ec220_tproxy
+          cp research/hysteria/ec220_tproxy/*.go hysteria-src/app/ec220_tproxy/
+
+      - name: Locate heavyweight optional dependency entry points
+        run: |
+          set -euo pipefail
+          cd hysteria-src
+          {
+            echo '=== imports of uTLS ==='
+            grep -R -n --include='*.go' 'refraction-networking/utls' . || true
+            echo '=== ChromeParrot references ==='
+            grep -R -n --include='*.go' 'ChromeParrot' . || true
+            echo '=== brotli references ==='
+            grep -R -n --include='*.go' 'andybalholm/brotli' . || true
+            echo '=== klauspost compress references ==='
+            grep -R -n --include='*.go' 'klauspost/compress' . || true
+          } > ../OPTIONAL-IMPORTS.txt
+
+      - name: Build stripped and symbol-bearing minimal clients
+        run: |
+          set -euo pipefail
+          cd hysteria-src
+          export GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0
+          go build -trimpath -ldflags '-s -w -buildid=' -o ../ec220-hy2-stripped ./app/ec220_tproxy
+          go build -trimpath -ldflags '-buildid=' -o ../ec220-hy2-symbols ./app/ec220_tproxy
+          cd ..
+          stat -c 'STRIPPED_BYTES=%s' ec220-hy2-stripped | tee LINKMAP-SIZE.txt
+          stat -c 'SYMBOL_BUILD_BYTES=%s' ec220-hy2-symbols | tee -a LINKMAP-SIZE.txt
+          go tool nm -size -sort size ec220-hy2-symbols | tail -n 400 > TOP-SYMBOLS.txt
+          go tool nm -size ec220-hy2-symbols | awk '
+            { size=$2; name=$4; if (name=="") next;
+              pkg=name;
+              sub(/\.[^./()]+(\.|$).*/, "", pkg);
+              if (pkg ~ /^type:/ || pkg ~ /^go:/) pkg="runtime-metadata";
+              sum[pkg]+=size
+            }
+            END { for (p in sum) printf "%12d %s\n", sum[p], p }
+          ' | sort -nr | sed -n '1,150p' > PACKAGE-SIZE-APPROX.txt
+
+      - name: Record linked module set
+        run: |
+          set -euo pipefail
+          go version -m ec220-hy2-stripped > GO-BUILD.txt
+          {
+            echo '=== selected heavyweight linked modules ==='
+            grep -E 'utls|brotli|klauspost|qpack|quic-go|x/crypto|x/net|x/text' GO-BUILD.txt || true
+          } > LINKED-HEAVY-MODULES.txt
+
+      - name: Upload attribution reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: EC220-v0.7b-Hysteria2-linkmap
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            LINKMAP-SIZE.txt
+            OPTIONAL-IMPORTS.txt
+            TOP-SYMBOLS.txt
+            PACKAGE-SIZE-APPROX.txt
+            GO-BUILD.txt
+            LINKED-HEAVY-MODULES.txt
