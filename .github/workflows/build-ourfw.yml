@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - agent/v0.7-subscription-manager
+      - agent/v0.7-integration
     tags:
       - 'ourfw-v*'
 
@@ -30,7 +31,7 @@ jobs:
           sh ./tests/static-check.sh
           sh ./tests/v064-hardware-regressions.sh
           sh ./tests/v070-subscription-manager.sh
-          python3 -m py_compile tools/harden-https-defaults.py tests/https-hardening-mock.py ci/verify-https-security.py
+          python3 -m py_compile tools/harden-https-defaults.py tools/enable-tproxy.py tests/https-hardening-mock.py ci/verify-https-security.py
           python3 ./tests/https-hardening-mock.py
 
       - name: Load pinned variables
@@ -63,12 +64,20 @@ jobs:
           sha256sum toolchain.tzst | tee TOOLCHAIN.sha256
           tar -C padavan-ng --zstd -xf toolchain.tzst
 
-      - name: Integrate OURFW
+      - name: Integrate OURFW and TPROXY
         run: |
           cp build.config padavan-ng/trunk/.config
           python3 tools/apply-to-padavan.py padavan-ng
+          python3 tools/enable-tproxy.py padavan-ng/trunk
           python3 tools/harden-https-defaults.py padavan-ng
           python3 tools/verify-padavan-tree.py padavan-ng
+          cfg=padavan-ng/trunk/configs/boards/TPLINK/TL_EC220_G5-V2/kernel-3.4.x.config
+          grep -qx 'CONFIG_EXPERIMENTAL=y' "$cfg"
+          grep -qx 'CONFIG_NETFILTER_ADVANCED=y' "$cfg"
+          grep -qx 'CONFIG_IP_NF_MANGLE=m' "$cfg"
+          grep -qx 'CONFIG_NETFILTER_TPROXY=m' "$cfg"
+          grep -qx 'CONFIG_NETFILTER_XT_TARGET_TPROXY=m' "$cfg"
+          grep -qx 'CONFIG_NETFILTER_XT_MATCH_SOCKET=m' "$cfg"
 
       - name: Build firmware
         run: |
@@ -85,6 +94,7 @@ jobs:
         run: |
           ./ci/verify-built-romfs.sh padavan-ng build.log ROMFS-VERIFY.txt
           ./ci/verify-subscription-romfs.sh padavan-ng SUBSCRIPTION-ROMFS-VERIFY.txt
+          ./ci/verify-tproxy-romfs.sh padavan-ng TPROXY-ROMFS-VERIFY.txt
 
       - name: Validate and prepare artifacts
         run: |
@@ -101,7 +111,7 @@ jobs:
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-          name: EC220-G5-v2-OURFW-${{ env.OURFW_VERSION }}
+          name: EC220-G5-v2-OURFW-${{ env.OURFW_VERSION }}-TPROXY-INTEGRATION
           retention-days: 14
           if-no-files-found: error
           path: |
@@ -112,6 +122,7 @@ jobs:
             MODULE-EXPORTS.txt
             ROMFS-VERIFY.txt
             SUBSCRIPTION-ROMFS-VERIFY.txt
+            TPROXY-ROMFS-VERIFY.txt
             IMAGE-VERIFY.txt
             PAYLOAD-VERIFY.txt
             HTTPS-VERIFY.txt
@@ -130,6 +141,7 @@ jobs:
             MODULE-EXPORTS.txt
             ROMFS-VERIFY.txt
             SUBSCRIPTION-ROMFS-VERIFY.txt
+            TPROXY-ROMFS-VERIFY.txt
             IMAGE-VERIFY.txt
             PAYLOAD-VERIFY.txt
             HTTPS-VERIFY.txt
