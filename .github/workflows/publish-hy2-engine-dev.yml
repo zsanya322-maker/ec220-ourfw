@@ -1,0 +1,100 @@
+name: Publish EC220 Hysteria2 Engine Candidate
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v0.7-hotfix-packaging
+    paths:
+      - '.github/workflows/publish-hy2-engine-dev.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      HY_COMMIT: 14e9fff1d972ab0187ac7fcf75b9514dc8664065
+      RELEASE_TAG: hy2-engine-v0.7b-r1
+      EXPECTED_SHA256: 02d907537a313f0fd69b0390af2eb89b4f8661208320ee6955f7bf9f1c0de99f
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: false
+
+      - name: Install runtime verifier
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends file qemu-user
+
+      - name: Build exact MIPSLE softfloat Salamander engine
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/apernet/hysteria.git hysteria-src
+          git -C hysteria-src checkout --detach "$HY_COMMIT"
+          test "$(git -C hysteria-src rev-parse HEAD)" = "$HY_COMMIT"
+          mkdir -p hysteria-src/app/ec220_tproxy
+          cp research/hysteria/ec220_tproxy/*.go hysteria-src/app/ec220_tproxy/
+          cd hysteria-src
+          GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0 \
+            go build -trimpath -ldflags '-s -w' -tags salamander \
+            -o ../ec220-hy2-tproxy-salamander ./app/ec220_tproxy
+          cd ..
+          file ec220-hy2-tproxy-salamander | tee ENGINE-ELF.txt
+          file ec220-hy2-tproxy-salamander | grep -Eqi 'ELF 32-bit.*LSB.*MIPS'
+          actual=$(sha256sum ec220-hy2-tproxy-salamander | awk '{print $1}')
+          test "$actual" = "$EXPECTED_SHA256"
+          printf '%s  ec220-hy2-tproxy-salamander\n' "$actual" > ec220-hy2-tproxy-salamander.sha256
+
+      - name: Passive MIPS secret-file smoke test
+        run: |
+          set -euo pipefail
+          secret='release-smoke-auth-secret'
+          obfs='release-smoke-obfs-secret'
+          printf 'hy2://%s@192.0.2.20:443/?sni=release.example.com&obfs=salamander&obfs-password=%s\n' "$secret" "$obfs" > candidate.uri
+          chmod 0600 candidate.uri
+          qemu-mipsel ./ec220-hy2-tproxy-salamander -uri-file candidate.uri -check-config > ENGINE-SMOKE.txt 2>&1
+          grep -q '^CONFIG_CHECK=OK .*AUTH=true .*SNI=true .*OBFS=salamander' ENGINE-SMOKE.txt
+          ! grep -Fq "$secret" ENGINE-SMOKE.txt
+          ! grep -Fq "$obfs" ENGINE-SMOKE.txt
+
+      - name: Write immutable candidate metadata
+        run: |
+          cat > ENGINE-INFO.txt <<EOF
+          ENGINE=ec220-hy2-tproxy-salamander
+          RELEASE_TAG=$RELEASE_TAG
+          HYSTERIA_UPSTREAM_COMMIT=$HY_COMMIT
+          OURFW_SOURCE_COMMIT=$GITHUB_SHA
+          TARGET=linux/mipsle/softfloat
+          TPROXY=tcp+udp
+          OBFS=plain+salamander
+          SHA256=$EXPECTED_SHA256
+          BYTES=$(stat -c %s ec220-hy2-tproxy-salamander)
+          PASSIVE_QEMU_SELFTEST=OK
+          EOF
+
+      - name: Publish release candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              ec220-hy2-tproxy-salamander \
+              ec220-hy2-tproxy-salamander.sha256 \
+              ENGINE-INFO.txt ENGINE-SMOKE.txt ENGINE-ELF.txt --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --title 'EC220 Hysteria2 engine v0.7b r1' \
+              --notes 'Development candidate for OURFW v0.7. MIPSLE softfloat, TCP+UDP TPROXY, protected URI-file input, plain+Salamander. Not a standalone router firmware.' \
+              --prerelease \
+              ec220-hy2-tproxy-salamander \
+              ec220-hy2-tproxy-salamander.sha256 \
+              ENGINE-INFO.txt ENGINE-SMOKE.txt ENGINE-ELF.txt
+          fi
