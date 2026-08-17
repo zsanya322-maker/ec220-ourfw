@@ -11,9 +11,18 @@ SUB_META="$SUB_STATE/nodes.meta"
 SUB_SECRETS="$SUB_STATE/nodes.secret"
 SUB_CANDIDATE="$SUB_STATE/candidate"
 
+subscription_node_id_valid() {
+    case "${1:-}" in
+      n*) safe_id "$1" ;;
+      *) return 1 ;;
+    esac
+}
+
 subscription_load_conf() {
     SUBSCRIPTION_ENABLED=0
     SUBSCRIPTION_REFRESH=manual
+    SUBSCRIPTION_PRIMARY_ID=
+    SUBSCRIPTION_BACKUP_ID=
     SUBSCRIPTION_MAX_BYTES=524288
     SUBSCRIPTION_MAX_NODES=512
     SUBSCRIPTION_URI_MAX_BYTES=8192
@@ -22,6 +31,8 @@ subscription_load_conf() {
 
     bool01 "${SUBSCRIPTION_ENABLED:-0}" || return 1
     case "${SUBSCRIPTION_REFRESH:-manual}" in manual|daily) ;; *) return 1;; esac
+    [ -z "${SUBSCRIPTION_PRIMARY_ID:-}" ] || subscription_node_id_valid "$SUBSCRIPTION_PRIMARY_ID" || return 1
+    [ -z "${SUBSCRIPTION_BACKUP_ID:-}" ] || subscription_node_id_valid "$SUBSCRIPTION_BACKUP_ID" || return 1
     is_uint "${SUBSCRIPTION_MAX_BYTES:-}" || return 1
     is_uint "${SUBSCRIPTION_MAX_NODES:-}" || return 1
     is_uint "${SUBSCRIPTION_URI_MAX_BYTES:-}" || return 1
