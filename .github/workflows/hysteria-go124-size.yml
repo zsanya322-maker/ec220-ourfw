@@ -26,7 +26,7 @@ jobs:
           cache: false
       - name: Install SquashFS tools
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends squashfs-tools
-      - name: Prepare no-Chrome sources
+      - name: Prepare minimal no-Chrome source graph
         run: |
           set -euo pipefail
           git clone --filter=blob:none https://github.com/apernet/hysteria.git hysteria-src
@@ -37,35 +37,40 @@ jobs:
           cp research/hysteria/ec220_tproxy/*.go hysteria-src/app/ec220_tproxy/
           python3 - <<'PY'
           from pathlib import Path
+
           p=Path('hysteria-src/core/client/client.go'); s=p.read_text()
           s=s.replace('ChromeParrot:                   !c.config.QUICConfig.DisableChromeParrot,','ChromeParrot:                   false,')
           a=s.index('\tif !c.config.QUICConfig.DisableChromeParrot {'); b=s.index('\t}\n',a)+3
           p.write_text(s[:a]+s[b:])
+
           p=Path('quic-go-ec220/internal/handshake/crypto_setup.go'); s=p.read_text()
           s=s.replace('cs.allow0RTT = enable0RTT && !chromeParrot','cs.allow0RTT = enable0RTT')
           old='''\tif chromeParrot {\n\t\tconn, err := newUTLSQUICClient(tlsConf)\n\t\tif err != nil {\n\t\t\treturn nil, err\n\t\t}\n\t\tcs.conn = conn\n\t} else {\n\t\tcs.conn = tls.QUICClient(&tls.QUICConfig{\n\t\t\tTLSConfig:           tlsConf,\n\t\t\tEnableSessionEvents: true,\n\t\t})\n\t}\n'''
           new='''\tcs.conn = tls.QUICClient(&tls.QUICConfig{\n\t\tTLSConfig:           tlsConf,\n\t\tEnableSessionEvents: true,\n\t})\n'''
+          if old not in s: raise SystemExit('uTLS branch not found')
           p.write_text(s.replace(old,new))
           Path('quic-go-ec220/internal/handshake/tls_conn_utls.go').unlink()
           Path('quic-go-ec220/internal/handshake/chrome_client_hello.go').unlink()
-          # Research only: lower local module/toolchain directives to test whether
-          # the pinned source actually needs 1.25 language/stdlib features.
-          for path in list(Path('hysteria-src').rglob('go.mod'))+[Path('quic-go-ec220/go.mod')]:
-              s=path.read_text()
-              import re
-              s=re.sub(r'(?m)^go 1\.25(?:\.0)?$', 'go 1.24.0', s)
-              s=re.sub(r'(?m)^toolchain go1\.25\.1$', 'toolchain go1.24.6', s)
-              path.write_text(s)
-          wp=Path('hysteria-src/go.work')
-          if wp.exists():
-              s=wp.read_text(); s=re.sub(r'(?m)^go 1\.25(?:\.0)?$', 'go 1.24.0', s); wp.write_text(s)
+
+          # Avoid unrelated app/server/ACME dependencies when testing an older
+          # compiler. The EC220 program only imports core client + app tproxy.
+          Path('hysteria-src/app/go.mod').write_text('''module github.com/apernet/hysteria/app/v2\n\ngo 1.24.0\n\nrequire (\n\tgithub.com/apernet/go-tproxy v0.0.0-20230809025308-8f4723fd742f\n\tgithub.com/apernet/hysteria/core/v2 v2.0.0-00010101000000-000000000000\n)\n''')
+          Path('hysteria-src/core/go.mod').write_text('''module github.com/apernet/hysteria/core/v2\n\ngo 1.24.0\n\nrequire (\n\tgithub.com/apernet/quic-go v0.61.1-0.20260806010916-184d081eef3e\n\tgolang.org/x/exp v0.0.0-20240506185415-9bf2ced13842\n\tgolang.org/x/time v0.15.0\n)\n''')
+          Path('quic-go-ec220/go.mod').write_text('''module github.com/apernet/quic-go\n\ngo 1.24.0\n\nrequire (\n\tgithub.com/quic-go/qpack v0.6.0\n\tgolang.org/x/crypto v0.54.0\n\tgolang.org/x/net v0.56.0\n\tgolang.org/x/sync v0.22.0\n\tgolang.org/x/sys v0.47.0\n)\n''')
+          Path('hysteria-src/go.work').write_text('''go 1.24.0\n\nuse (\n\t./app\n\t./core\n)\n\nreplace github.com/apernet/quic-go => ../quic-go-ec220\n''')
           PY
-          (cd hysteria-src && GOTOOLCHAIN=local go work edit -replace github.com/apernet/quic-go=../quic-go-ec220)
-      - name: Compile and measure
+      - name: Resolve minimal graph and compile
         run: |
           set -euo pipefail
-          export GOTOOLCHAIN=local GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0
+          export GOTOOLCHAIN=local
+          (cd hysteria-src/app && go mod tidy)
+          (cd hysteria-src/core && go mod tidy)
+          (cd quic-go-ec220 && go mod tidy)
+          export GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0
           (cd hysteria-src && go build -trimpath -gcflags=all=-l -ldflags '-s -w -buildid=' -o ../hy2-go124 ./app/ec220_tproxy)
+      - name: Measure flash footprint
+        run: |
+          set -euo pipefail
           mkdir -p root/usr/bin && cp hy2-go124 root/usr/bin/hysteria
           mksquashfs root hy2-go124.sqfs -comp xz -b 131072 -all-root -no-exports -noappend -nopad -noI -no-xattrs >/dev/null
           raw=$(stat -c %s hy2-go124); sq=$(stat -c %s hy2-go124.sqfs)
