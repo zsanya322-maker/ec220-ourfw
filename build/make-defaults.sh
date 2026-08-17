@@ -44,6 +44,20 @@ for js in "$INT/www/assets/ourfw.js" "$STAGE/www/assets/ourfw.js"; do
     }
 done
 
+# v0.7 keeps the large subscription/Hysteria control surface on a separate page
+# so the main dashboard stays light. Inject only a tiny navigation link into the
+# two production copies; the source anchor is asserted to avoid silent drift.
+for html in "$INT/www/index.asp" "$STAGE/www/index.asp"; do
+    [ -f "$html" ] || { echo "OURFW WebUI index missing: $html" >&2; exit 1; }
+    if ! grep -Fq 'href="/ourfw/subscription.asp"' "$html"; then
+        grep -Fq '<button class="tab" data-tab="vpn">VPN</button>' "$html" || {
+            echo "OURFW subscription nav anchor changed unexpectedly: $html" >&2; exit 1;
+        }
+        sed -i '/data-tab="vpn">VPN<\/button>/a\    <a class="linkbtn" href="/ourfw/subscription.asp">Подписки / Hysteria2</a>' "$html"
+    fi
+    grep -Fq 'href="/ourfw/subscription.asp"' "$html" || { echo "subscription WebUI link missing: $html" >&2; exit 1; }
+done
+
 rm -f "$OUT"
 LC_ALL=C TZ=UTC tar -C "$STAGE" \
   --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \

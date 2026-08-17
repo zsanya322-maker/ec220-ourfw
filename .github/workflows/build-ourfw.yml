@@ -31,6 +31,7 @@ jobs:
           sh ./tests/static-check.sh
           sh ./tests/v064-hardware-regressions.sh
           sh ./tests/v070-subscription-manager.sh
+          sh ./tests/v070-subscription-webui.sh
           python3 -m py_compile tools/harden-https-defaults.py tests/https-hardening-mock.py ci/verify-https-security.py tools/enable-tproxy.py
           python3 ./tests/https-hardening-mock.py
 

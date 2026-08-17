@@ -13,7 +13,17 @@ parse_result="$(sed -n 's/^RESULT=//p' "$SUB_STATE/parse.status" 2>/dev/null | h
 case "$fetch_result" in *[!A-Za-z0-9_.-]*) fetch_result=redacted;; esac
 case "$parse_result" in *[!A-Za-z0-9_.-]*) parse_result=redacted;; esac
 
-printf '{"ok":true,"enabled":%s,"refresh":"%s","nodes":%s,"fetch":"%s","parse":"%s"}\n' \
-  "$([ "${SUBSCRIPTION_ENABLED:-0}" = 1 ] && echo true || echo false)" \
+# Expose only a boolean. Provider URL, query token and credentials are never
+# returned to WebUI/status JSON.
+source_set=false
+source="$(subscription_source_url 2>/dev/null || true)"
+if [ -n "$source" ] && subscription_validate_url "$source"; then
+    host="$(subscription_source_host "$source")"
+    subscription_host_allowed "$host" && source_set=true || true
+fi
+unset source host
+
+printf '{"ok":true,"enabled":%s,"source_set":%s,"refresh":"%s","nodes":%s,"fetch":"%s","parse":"%s"}\n' \
+  "$([ "${SUBSCRIPTION_ENABLED:-0}" = 1 ] && echo true || echo false)" "$source_set" \
   "$(json_escape "${SUBSCRIPTION_REFRESH:-manual}")" "$nodes" \
   "$(json_escape "$fetch_result")" "$(json_escape "$parse_result")"

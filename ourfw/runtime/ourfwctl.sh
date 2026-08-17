@@ -33,7 +33,9 @@ boot_modules() {
     [ "${OURFW_ENABLED:-1}" = "1" ] || exit 0
     hook_install || log "unable to install Padavan event hooks"
     baseline_if_missing
-    for m in zram vpn smart-routing adblock dns nfqws watchdog diagnostics; do
+    # Subscription boot hook is deliberately passive: it only creates protected
+    # runtime state/salt and fixes secret permissions. It never fetches a feed.
+    for m in zram subscription vpn smart-routing adblock dns nfqws watchdog diagnostics; do
         f="$OURFW/modules/$m/start.sh"
         [ -x "$f" ] && "$f" boot || true
     done

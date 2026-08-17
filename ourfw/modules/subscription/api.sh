@@ -45,6 +45,23 @@ selected_json() {
       "$(json_escape "$p")" "$p_present" "$(json_escape "$b")" "$b_present"
 }
 
+set_enabled() {
+    value="$1"
+    bool01 "$value" || return 2
+    subscription_load_conf || return 3
+    old="${SUBSCRIPTION_ENABLED:-0}"
+    [ "$old" = "$value" ] && return 0
+    conf_set "$SUB_CONF" SUBSCRIPTION_ENABLED "$value" || return 4
+    if save_storage; then
+        log "subscription: manager enabled=$value"
+        return 0
+    fi
+    conf_set "$SUB_CONF" SUBSCRIPTION_ENABLED "$old" >/dev/null 2>&1 || true
+    save_storage >/dev/null 2>&1 || true
+    log 'subscription: manager setting persistence failed'
+    return 5
+}
+
 set_selection() {
     slot="$1"; id="$2"
     case "$slot" in
@@ -80,11 +97,12 @@ set_selection() {
 
 selection_reply() {
     slot="$1"; id="$2"
-    if set_selection "$slot" "$id"; then
+    set_selection "$slot" "$id"
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
         printf '{"ok":true,"slot":"%s","id":"%s"}\n' "$slot" "$(json_escape "$id")"
         return 0
     fi
-    rc=$?
     printf '{"ok":false,"slot":"%s","error":"selection rejected","rc":%d}\n' "$slot" "$rc"
     return "$rc"
 }
@@ -93,6 +111,17 @@ OP=${1:-status}
 case "$OP" in
   status)
     exec /bin/sh /etc/storage/ourfw/modules/subscription/health.sh
+    ;;
+  enable|disable)
+    [ "$OP" = enable ] && wanted=1 || wanted=0
+    set_enabled "$wanted"
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        printf '{"ok":true,"enabled":%s}\n' "$([ "$wanted" = 1 ] && echo true || echo false)"
+        exit 0
+    fi
+    printf '{"ok":false,"error":"manager setting rejected","rc":%d}\n' "$rc"
+    exit "$rc"
     ;;
   nodes)
     nodes_json
