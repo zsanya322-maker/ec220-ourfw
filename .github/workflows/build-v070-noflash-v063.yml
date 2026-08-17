@@ -1,0 +1,200 @@
+name: Build EC220 v0.7 no-flash v0.6.3
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v0.7-noflash-v063
+    paths:
+      - 'ourfw/**'
+      - 'build/make-defaults.sh'
+      - 'noflash/v063/**'
+      - 'tests/v064-hardware-regressions.sh'
+      - 'tests/v070-subscription-manager.sh'
+      - 'tests/v070-subscription-webui.sh'
+      - 'tests/v070-noflash-v063.sh'
+      - '.github/workflows/build-v070-noflash-v063.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate production mutable payload
+        run: |
+          set -euo pipefail
+          chmod +x build/*.sh tests/*.sh noflash/v063/*.sh
+          sh ./build/make-defaults.sh /tmp/ourfw-v070-defaults.tar.bz2
+          test -s /tmp/ourfw-v070-defaults.tar.bz2
+
+      - name: Compatibility regression gates
+        run: |
+          set -euo pipefail
+          sh ./tests/v064-hardware-regressions.sh
+          sh ./tests/v070-subscription-manager.sh
+          sh ./tests/v070-subscription-webui.sh
+          sh ./tests/v070-noflash-v063.sh
+
+      - name: Stage no-flash overlay
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v070-defaults /tmp/v070-noflash
+          mkdir -p /tmp/v070-defaults /tmp/v070-noflash/payload/defaults/config /tmp/v070-noflash/payload/defaults/profiles
+          tar -xjf /tmp/ourfw-v070-defaults.tar.bz2 -C /tmp/v070-defaults
+
+          # Code/UI come from the production payload generated above, so the
+          # hardware-confirmed no-poll WebUI transform and subscription nav are
+          # identical to the full v0.7 firmware build.
+          cp -a /tmp/v070-defaults/runtime /tmp/v070-noflash/payload/
+          cp -a /tmp/v070-defaults/modules /tmp/v070-noflash/payload/
+          cp -a /tmp/v070-defaults/www /tmp/v070-noflash/payload/
+          cp /tmp/v070-defaults/config/subscription.conf /tmp/v070-noflash/payload/defaults/config/subscription.conf
+          cp /tmp/v070-defaults/profiles/subscription.secret /tmp/v070-noflash/payload/defaults/profiles/subscription.secret
+          printf '%s\n' 'v0.7.0-noflash-v063' > /tmp/v070-noflash/payload/VERSION.overlay
+
+          # The immutable firmware remains v0.6.3. Make status/WebUI display the
+          # overlay version when present without ever changing BASE/VERSION.
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/v070-noflash/payload/runtime/ourfwctl.sh')
+          s=p.read_text()
+          old='ver="$(cat "$OURFW/VERSION" 2>/dev/null || echo dev)"'
+          new='ver="$(cat "$OURFW/VERSION.overlay" 2>/dev/null || cat "$OURFW/VERSION" 2>/dev/null || echo dev)"'
+          n=s.count(old)
+          if n != 2:
+              raise SystemExit(f'expected 2 status version reads, got {n}')
+          p.write_text(s.replace(old,new))
+          PY
+
+          test ! -e /tmp/v070-noflash/payload/VERSION
+          ! grep -Fq 'setInterval(status' /tmp/v070-noflash/payload/www/assets/ourfw.js
+          grep -Fq 'visibilitychange' /tmp/v070-noflash/payload/www/assets/ourfw.js
+          grep -Fq 'href="/ourfw/subscription.asp"' /tmp/v070-noflash/payload/www/index.asp
+          grep -Fq 'VERSION.overlay' /tmp/v070-noflash/payload/runtime/ourfwctl.sh
+
+      - name: Import hardware-tested TPROXY modules
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Run #63 is the successful final v0.7 full build from the same source
+          # line. These exact three binaries were subsequently loaded on the
+          # physical v0.6.3 EC220 and are pinned again below by SHA256.
+          curl -fsSL -L \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            'https://api.github.com/repos/zsanya322-maker/ec220-ourfw/actions/artifacts/9283152154/zip' \
+            -o /tmp/run63.zip
+          rm -rf /tmp/run63 && mkdir -p /tmp/run63
+          unzip -q /tmp/run63.zip -d /tmp/run63
+          src=/tmp/run63/dist/tproxy-modules
+          test -s "$src/nf_tproxy_core.ko"
+          test -s "$src/xt_socket.ko"
+          test -s "$src/xt_TPROXY.ko"
+          printf '%s  %s\n' \
+            '904722a51c27a85e6d54376c9c66b134562a83203506725b4ff0e22722848c1a' "$src/nf_tproxy_core.ko" \
+            'cbd1178368ce77109bc089e214e93135fbec2edbb36a66e86032fa3b9d9787e9' "$src/xt_socket.ko" \
+            '513cdec45fdd853fbef8ffe7810e49ec3b3bcd8391359c903b373a6f18d9a79f' "$src/xt_TPROXY.ko" | sha256sum -c -
+          dst=/tmp/v070-noflash/payload/modules/vpn/tproxy-modules
+          mkdir -p "$dst"
+          cp "$src/nf_tproxy_core.ko" "$src/xt_socket.ko" "$src/xt_TPROXY.ko" "$dst/"
+          chmod 0644 "$dst"/*.ko
+          (cd "$dst" && sha256sum nf_tproxy_core.ko xt_socket.ko xt_TPROXY.ko > SHA256SUMS.txt)
+
+      - name: Build and verify user package
+        run: |
+          set -euo pipefail
+          stage=/tmp/v070-noflash
+          out="$GITHUB_WORKSPACE/dist-noflash"
+          rm -rf "$out" && mkdir -p "$out/EC220-v0.7.0-NOFLASH-v063"
+
+          find "$stage/payload" -type d -exec chmod 0755 {} \;
+          find "$stage/payload" -type f -exec chmod 0644 {} \;
+          find "$stage/payload/runtime" "$stage/payload/modules" -type f -name '*.sh' -exec chmod 0755 {} \;
+          chmod 0600 "$stage/payload/defaults/config/subscription.conf" "$stage/payload/defaults/profiles/subscription.secret"
+
+          bad=0
+          while IFS= read -r f; do sh -n "$f" || bad=1; done < <(find "$stage/payload/runtime" "$stage/payload/modules" -type f -name '*.sh' -print)
+          test "$bad" -eq 0
+
+          payload="$out/EC220-v0.7.0-NOFLASH-v063/OURFW-v0.7.0-NOFLASH-v063-payload.tar.bz2"
+          LC_ALL=C TZ=UTC tar -C "$stage/payload" \
+            --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+            -cf - . | bzip2 -9 > "$payload"
+          test -s "$payload"
+
+          # This is a conservative code-payload gate, not the MTD write itself.
+          # The router installer still treats mtd_storage.sh save as authoritative
+          # and automatically restores the old tree if that final write fails.
+          bytes=$(stat -c %s "$payload")
+          test "$bytes" -le 65536
+          sha=$(sha256sum "$payload" | awk '{print $1}')
+
+          cp noflash/v063/APPLY-OURFW-v0.7.0-NOFLASH-v063.sh "$out/EC220-v0.7.0-NOFLASH-v063/"
+          cp noflash/v063/ROLLBACK-CURRENT-BOOT.sh "$out/EC220-v0.7.0-NOFLASH-v063/"
+          chmod 0755 "$out/EC220-v0.7.0-NOFLASH-v063/"*.sh
+          cat > "$out/EC220-v0.7.0-NOFLASH-v063/MANIFEST.txt" <<EOF
+          PACKAGE=OURFW-v0.7.0-NOFLASH-v063
+          REQUIRED_BASE=v0.6.3
+          REQUIRED_KERNEL=3.4.113
+          REQUIRED_HOTFIXES=HF1,HF2,HF3
+          OVERLAY_VERSION=v0.7.0-noflash-v063
+          PAYLOAD_BYTES=$bytes
+          PAYLOAD_SHA256=$sha
+          TPROXY_SOURCE_RUN=32014047002
+          TPROXY_SOURCE_ARTIFACT=9283152154
+          NF_TPROXY_CORE_SHA256=904722a51c27a85e6d54376c9c66b134562a83203506725b4ff0e22722848c1a
+          XT_SOCKET_SHA256=cbd1178368ce77109bc089e214e93135fbec2edbb36a66e86032fa3b9d9787e9
+          XT_TPROXY_SHA256=513cdec45fdd853fbef8ffe7810e49ec3b3bcd8391359c903b373a6f18d9a79f
+          HYSTERIA_ENGINE_SHA256=02d907537a313f0fd69b0390af2eb89b4f8661208320ee6955f7bf9f1c0de99f
+          HYSTERIA_ENGINE_BYTES=9830593
+          INSTALL_TOUCHES_FIRMWARE=NO
+          INSTALL_CHANGES_ROUTING=NO
+          EOF
+          sed -i 's/^          //' "$out/EC220-v0.7.0-NOFLASH-v063/MANIFEST.txt"
+
+          cat > "$out/EC220-v0.7.0-NOFLASH-v063/README-RU.txt" <<'EOF'
+          OURFW v0.7.0 NO-FLASH для TP-Link EC220-G5 v2
+
+          Назначение: обновить подтвержденную живую базу
+          v0.6.3 + HOTFIX1 + HOTFIX2 + HOTFIX3 до функций v0.7 без прошивки .bin.
+
+          Пакет НЕ пишет firmware/kernel/rootfs разделы. Он меняет только
+          /etc/storage/ourfw и намеренно оставляет /etc/storage/ourfw/VERSION=v0.6.3.
+          Фактическая версия функций хранится в VERSION.overlay.
+
+          Перед установкой скопируйте /etc/storage/ourfw на ПК через WinSCP.
+          Затем загрузите всю эту папку в /tmp/EC220-v0.7.0-NOFLASH-v063/
+          и запустите по SSH:
+
+            chmod 755 /tmp/EC220-v0.7.0-NOFLASH-v063/*.sh
+            /tmp/EC220-v0.7.0-NOFLASH-v063/APPLY-OURFW-v0.7.0-NOFLASH-v063.sh
+
+          Установка пассивная: Hysteria не стартует, подписка не скачивается,
+          iptables/ip rule/routes не меняются. После установки сначала проверяются
+          WebUI и SSH. До reboot точная резервная копия старого OURFW остается в /tmp.
+          EOF
+          sed -i 's/^          //' "$out/EC220-v0.7.0-NOFLASH-v063/README-RU.txt"
+
+          (cd "$out/EC220-v0.7.0-NOFLASH-v063" && sha256sum * > SHA256SUMS.txt)
+          (cd "$out" && zip -qr EC220-v0.7.0-NOFLASH-v063.zip EC220-v0.7.0-NOFLASH-v063)
+          sha256sum "$out/EC220-v0.7.0-NOFLASH-v063.zip" | tee "$out/EC220-v0.7.0-NOFLASH-v063.zip.sha256"
+          echo "NOFLASH_PAYLOAD_BYTES=$bytes"
+          echo "NOFLASH_PAYLOAD_SHA256=$sha"
+
+      - name: Upload no-flash package
+        uses: actions/upload-artifact@v4
+        with:
+          name: EC220-v0.7.0-NOFLASH-v063
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            dist-noflash/EC220-v0.7.0-NOFLASH-v063.zip
+            dist-noflash/EC220-v0.7.0-NOFLASH-v063.zip.sha256
+            dist-noflash/EC220-v0.7.0-NOFLASH-v063/**
