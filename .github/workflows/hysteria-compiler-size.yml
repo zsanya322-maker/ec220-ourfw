@@ -1,0 +1,60 @@
+name: Measure EC220 Hysteria2 Compiler Size Flags
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v0.7b-tproxy-hy2
+    paths:
+      - '.github/workflows/hysteria-compiler-size.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    env:
+      HY_COMMIT: 14e9fff1d972ab0187ac7fcf75b9514dc8664065
+      HEADROOM: '1441788'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.1'
+          cache: false
+      - name: Install SquashFS tools
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends squashfs-tools
+      - name: Checkout exact source
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/apernet/hysteria.git hysteria-src
+          git -C hysteria-src checkout --detach "$HY_COMMIT"
+          mkdir -p hysteria-src/app/ec220_tproxy
+          cp research/hysteria/ec220_tproxy/*.go hysteria-src/app/ec220_tproxy/
+      - name: Build and measure variants
+        run: |
+          set -euo pipefail
+          export GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0 GOFIPS140=off
+          : > COMPILER-SIZE.txt
+          build_one() {
+            name="$1"; shift
+            (cd hysteria-src && go build -trimpath -ldflags '-s -w -buildid=' "$@" -o "../hy2-$name" ./app/ec220_tproxy)
+            rm -rf "root-$name"
+            mkdir -p "root-$name/usr/bin"
+            cp "hy2-$name" "root-$name/usr/bin/hysteria"
+            mksquashfs "root-$name" "hy2-$name.sqfs" -comp xz -b 131072 -all-root -no-exports -noappend -nopad -noI -no-xattrs >/dev/null
+            raw=$(stat -c %s "hy2-$name")
+            sq=$(stat -c %s "hy2-$name.sqfs")
+            if [ "$sq" -le "$HEADROOM" ]; then fit=YES; else fit=NO; fi
+            printf '%s RAW_BYTES=%s SQUASHFS_XZ_BYTES=%s FIT=%s\n' "$name" "$raw" "$sq" "$fit" | tee -a COMPILER-SIZE.txt
+          }
+          build_one baseline
+          build_one noinline -gcflags=all=-l
+          build_one nobounds -gcflags=all=-B
+          build_one noinline_nobounds -gcflags=all='-l -B'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EC220-v0.7b-Hysteria2-compiler-size
+          retention-days: 14
+          path: COMPILER-SIZE.txt

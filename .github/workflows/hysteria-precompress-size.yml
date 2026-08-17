@@ -1,0 +1,82 @@
+name: Measure EC220 Hysteria2 Precompressed Footprint
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v0.7b-tproxy-hy2
+    paths:
+      - '.github/workflows/hysteria-precompress-size.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    env:
+      HY_COMMIT: 14e9fff1d972ab0187ac7fcf75b9514dc8664065
+      HEADROOM: '1441788'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.1'
+          cache: false
+      - name: Install compression tools
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends xz-utils squashfs-tools
+      - name: Checkout exact Hysteria2 source
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/apernet/hysteria.git hysteria-src
+          git -C hysteria-src checkout --detach "$HY_COMMIT"
+          test "$(git -C hysteria-src rev-parse HEAD)" = "$HY_COMMIT"
+          mkdir -p hysteria-src/app/ec220_tproxy
+          cp research/hysteria/ec220_tproxy/*.go hysteria-src/app/ec220_tproxy/
+      - name: Build minimal MIPSLE client
+        run: |
+          set -euo pipefail
+          cd hysteria-src
+          export GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0 GOFIPS140=off
+          go build -trimpath -ldflags '-s -w -buildid=' -o ../hysteria-ec220 ./app/ec220_tproxy
+          cd ..
+          stat -c 'RAW_BYTES=%s' hysteria-ec220 | tee PRECOMPRESS-SIZE.txt
+      - name: Measure standalone XZ variants and final SquashFS cost
+        run: |
+          set -euo pipefail
+          measure() {
+            name="$1"; shift
+            cp hysteria-ec220 "hysteria-$name"
+            xz --threads=1 --check=crc32 --keep --force "$@" "hysteria-$name"
+            xzfile="hysteria-$name.xz"
+            xz --robot --list "$xzfile" > "xz-list-$name.txt"
+            rm -rf "root-$name"
+            mkdir -p "root-$name/usr/share/ourfw"
+            cp "$xzfile" "root-$name/usr/share/ourfw/hysteria.xz"
+            mksquashfs "root-$name" "packed-$name.sqfs" -comp xz -b 131072 -all-root -no-exports -noappend -nopad -noI -no-xattrs >/dev/null
+            xzb=$(stat -c %s "$xzfile")
+            sq=$(stat -c %s "packed-$name.sqfs")
+            if [ "$sq" -le "$HEADROOM" ]; then fit=YES; else fit=NO; fi
+            printf '%s XZ_BYTES=%s FINAL_SQUASHFS_BYTES=%s FIT=%s\n' "$name" "$xzb" "$sq" "$fit" | tee -a PRECOMPRESS-SIZE.txt
+          }
+          measure xz6 -6
+          measure xz9e -9e
+          measure dict1m --lzma2=preset=9e,dict=1MiB
+          measure dict4m --lzma2=preset=9e,dict=4MiB
+          measure dict8m --lzma2=preset=9e,dict=8MiB
+      - name: Summarize decoder memory
+        run: |
+          set -euo pipefail
+          {
+            echo 'HEADROOM_BYTES='$HEADROOM
+            echo 'XZ_ROBOT_LISTS:'
+            for f in xz-list-*.txt; do echo "--- $f"; cat "$f"; done
+          } >> PRECOMPRESS-SIZE.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EC220-v0.7b-Hysteria2-precompress-size
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            PRECOMPRESS-SIZE.txt
+            xz-list-*.txt

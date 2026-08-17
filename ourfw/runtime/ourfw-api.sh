@@ -22,6 +22,12 @@ run_ctl() {
     write_json "{\"ok\":$([ $rc -eq 0 ] && echo true || echo false),\"action\":\"$op\",\"rc\":$rc}"
     return $rc
 }
+subscription_secret_transfer() {
+    op="$1"; arg="${2:-}"
+    hook="$OURFW/modules/subscription/secret-transfer.sh"
+    [ -x "$hook" ] || { write_json '{"ok":false,"error":"subscription secret transport unavailable"}'; return 3; }
+    if [ -n "$arg" ]; then "$hook" "$op" "$arg" > "$OUT" 2>/tmp/ourfw-api-action.log; else "$hook" "$op" > "$OUT" 2>/tmp/ourfw-api-action.log; fi
+}
 
 case "$ACTION" in
   status)
@@ -36,18 +42,22 @@ case "$ACTION" in
     ;;
   file-get)
     safe_id "$P1" || { write_json '{"ok":false,"error":"invalid target"}'; exit 2; }
+    [ "$P1" != subscription-secret ] || { write_json '{"ok":false,"error":"subscription source is write-only"}'; exit 3; }
     "$OURFW/runtime/ourfw-transfer.sh" get "$P1" > "$OUT" 2>/tmp/ourfw-api-action.log
     ;;
   file-begin)
     safe_id "$P1" || { write_json '{"ok":false,"error":"invalid target"}'; exit 2; }
+    if [ "$P1" = subscription-secret ]; then subscription_secret_transfer begin "$P2"; exit $?; fi
     "$OURFW/runtime/ourfw-transfer.sh" begin "$P1" "$P2" > "$OUT" 2>/tmp/ourfw-api-action.log
     ;;
   file-chunk)
     safe_id "$P1" || { write_json '{"ok":false,"error":"invalid target"}'; exit 2; }
+    if [ "$P1" = subscription-secret ]; then subscription_secret_transfer chunk "$P2"; exit $?; fi
     "$OURFW/runtime/ourfw-transfer.sh" chunk "$P1" "$P2" > "$OUT" 2>/tmp/ourfw-api-action.log
     ;;
   file-commit)
     safe_id "$P1" || { write_json '{"ok":false,"error":"invalid target"}'; exit 2; }
+    if [ "$P1" = subscription-secret ]; then subscription_secret_transfer commit; exit $?; fi
     "$OURFW/runtime/ourfw-transfer.sh" commit "$P1" > "$OUT" 2>/tmp/ourfw-api-action.log
     ;;
   file-stage)
@@ -64,6 +74,7 @@ case "$ACTION" in
     ;;
   file-abort)
     safe_id "$P1" || { write_json '{"ok":false,"error":"invalid target"}'; exit 2; }
+    if [ "$P1" = subscription-secret ]; then subscription_secret_transfer abort; exit $?; fi
     "$OURFW/runtime/ourfw-transfer.sh" abort "$P1" > "$OUT" 2>/tmp/ourfw-api-action.log
     ;;
   backup-export)

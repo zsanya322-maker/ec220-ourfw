@@ -28,6 +28,7 @@ bash "$ROOT/tests/v062-rollback-reapply-mock.sh"
 bash "$ROOT/tests/v062-update-specialfiles.sh"
 sh "$ROOT/tests/romfs-verifier-mock.sh"
 bash "$ROOT/tests/runtime-mock.sh"
+sh "$ROOT/tests/v070-hy2-tproxy-runtime.sh"
 sh "$ROOT/build/make-defaults.sh" >/dev/null
 sh "$ROOT/tools/storage-budget.sh"
 
