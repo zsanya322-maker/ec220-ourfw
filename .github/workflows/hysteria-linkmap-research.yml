@@ -69,7 +69,7 @@ jobs:
               sum[pkg]+=size
             }
             END { for (p in sum) printf "%12d %s\n", sum[p], p }
-          ' | sort -nr | head -150 > PACKAGE-SIZE-APPROX.txt
+          ' | sort -nr | sed -n '1,150p' > PACKAGE-SIZE-APPROX.txt
 
       - name: Record linked module set
         run: |
