@@ -31,7 +31,7 @@ jobs:
       - name: Install measurement tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends file binutils squashfs-tools
+          sudo apt-get install -y --no-install-recommends file binutils squashfs-tools qemu-user bzip2 xz-utils gzip
 
       - name: Checkout exact Hysteria2 release source
         run: |
@@ -54,6 +54,10 @@ jobs:
           go build -trimpath -ldflags '-s -w' -tags salamander -o ../ec220-hy2-tproxy-salamander ./app/ec220_tproxy
           cd ..
 
+          : > EC220-HY2-ELF.txt
+          : > EC220-HY2-RAW-SIZE.txt
+          : > EC220-HY2-SEGMENTS.txt
+          : > EC220-HY2-SHA256.txt
           for f in ec220-hy2-tproxy-plain ec220-hy2-tproxy-salamander; do
             file "$f" | tee -a EC220-HY2-ELF.txt
             file "$f" | grep -Eqi 'ELF 32-bit.*LSB.*MIPS'
@@ -61,8 +65,11 @@ jobs:
               echo "ERROR: $f requires a dynamic interpreter" >&2
               exit 73
             fi
+            readelf -h "$f" >> EC220-HY2-SEGMENTS.txt
+            readelf -l "$f" >> EC220-HY2-SEGMENTS.txt
             go version -m "$f" > "$f.go-build.txt"
             stat -c "$f RAW_BYTES=%s" "$f" | tee -a EC220-HY2-RAW-SIZE.txt
+            sha256sum "$f" | tee -a EC220-HY2-SHA256.txt
           done
 
           grep -q 'github.com/apernet/go-tproxy' ec220-hy2-tproxy-plain.go-build.txt
@@ -74,6 +81,37 @@ jobs:
             echo 'ERROR: minimal plain client unexpectedly links viper' >&2
             exit 75
           fi
+
+      - name: Passive MIPS startup smoke test
+        run: |
+          set -euo pipefail
+          : > EC220-HY2-SMOKE.txt
+          for f in ec220-hy2-tproxy-plain ec220-hy2-tproxy-salamander; do
+            qemu-mipsel "./$f" -h > "$f.smoke.txt" 2>&1
+            grep -q -- '--server' "$f.smoke.txt"
+            grep -q -- '--auth' "$f.smoke.txt"
+            grep -q -- '--listen' "$f.smoke.txt"
+            grep -q -- '--udp-timeout' "$f.smoke.txt"
+            printf '%s QEMU_STARTUP_HELP=OK\n' "$f" | tee -a EC220-HY2-SMOKE.txt
+          done
+          grep -q -- '--obfs-password' ec220-hy2-tproxy-salamander.smoke.txt
+          echo 'PASSIVE_RUNTIME_SELFTEST=OK' | tee -a EC220-HY2-SMOKE.txt
+
+      - name: Package transient runtime payloads
+        run: |
+          set -euo pipefail
+          : > EC220-HY2-PACKED-SIZE.txt
+          for f in ec220-hy2-tproxy-plain ec220-hy2-tproxy-salamander; do
+            bzip2 -9 -c "$f" > "$f.bz2"
+            xz -9e -c "$f" > "$f.xz"
+            gzip -9 -c "$f" > "$f.gz"
+            raw=$(stat -c %s "$f")
+            bz=$(stat -c %s "$f.bz2")
+            xz=$(stat -c %s "$f.xz")
+            gz=$(stat -c %s "$f.gz")
+            printf '%s RAW=%s BZIP2=%s XZ=%s GZIP=%s\n' "$f" "$raw" "$bz" "$xz" "$gz" | tee -a EC220-HY2-PACKED-SIZE.txt
+            sha256sum "$f.bz2" "$f.xz" "$f.gz" >> EC220-HY2-SHA256.txt
+          done
 
       - name: Measure exact Padavan-style SquashFS XZ cost
         run: |
@@ -107,17 +145,28 @@ jobs:
             } | tee -a HYSTERIA-TPROXY-MINIMAL-SIZE.txt
           done
 
-      - name: Upload measurement
+      - name: Upload measurement and runnable candidates
         uses: actions/upload-artifact@v4
         with:
           name: EC220-v0.7b-Hysteria2-tproxy-minimal
           retention-days: 14
           if-no-files-found: error
+          compression-level: 0
           path: |
             EC220-HY2-ELF.txt
             EC220-HY2-RAW-SIZE.txt
+            EC220-HY2-SEGMENTS.txt
+            EC220-HY2-SHA256.txt
+            EC220-HY2-SMOKE.txt
+            EC220-HY2-PACKED-SIZE.txt
             HYSTERIA-TPROXY-MINIMAL-SIZE.txt
             ec220-hy2-tproxy-plain.go-build.txt
             ec220-hy2-tproxy-salamander.go-build.txt
+            ec220-hy2-tproxy-plain.smoke.txt
+            ec220-hy2-tproxy-salamander.smoke.txt
+            ec220-hy2-tproxy-plain.bz2
+            ec220-hy2-tproxy-salamander.bz2
+            ec220-hy2-tproxy-plain.xz
+            ec220-hy2-tproxy-salamander.xz
             ec220-hy2-tproxy-plain.sqfs
             ec220-hy2-tproxy-salamander.sqfs
